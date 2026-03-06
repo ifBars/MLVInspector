@@ -1,6 +1,6 @@
-# MLVInspector.Dioxus
+# MLVInspector
 
-**MLVInspector.Dioxus** is a Rust + Dioxus desktop frontend for inspecting .NET assemblies and visualizing MLVScan / ILInspector analysis results.
+**MLVInspector** is a Rust + Dioxus desktop frontend for inspecting .NET assemblies and visualizing MLVScan / ILInspector analysis results.
 
 It provides a desktop UI over a long-lived `ILInspector.Worker` subprocess, letting you open an assembly, explore its methods and IL, and review scan findings in a richer interface than a raw CLI response.
 
