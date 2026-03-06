@@ -181,18 +181,20 @@ internal sealed class Dispatcher
         };
 
         var decompiler = new CSharpDecompiler(p.Assembly, settings);
+        var requestedTypeName = NormalizeRequestedName(p.TypeName);
+        var requestedMethodName = NormalizeRequestedName(p.MethodName);
         string source;
 
         try
         {
-            if (p.TypeName != null)
+            if (requestedTypeName != null)
             {
                 // Mono.Cecil uses '/' for nested types; ICSharpCode.Decompiler
                 // uses '+' in its reflection-style names (same as System.Reflection).
-                var reflectionName = p.TypeName.Replace('/', '+');
+                var reflectionName = requestedTypeName.Replace('/', '+');
                 var fullName = new FullTypeName(reflectionName);
 
-                if (p.MethodName != null)
+                if (requestedMethodName != null)
                 {
                     // FindType handles both top-level and nested types when
                     // given a reflection-style name (dots for namespaces, + for
@@ -204,7 +206,7 @@ internal sealed class Dispatcher
                     if (typeDef != null)
                     {
                         var method = typeDef.Methods
-                            .FirstOrDefault(m => m.Name == p.MethodName);
+                            .FirstOrDefault(m => m.Name == requestedMethodName);
 
                         source = method != null
                             ? decompiler.DecompileAsString(method.MetadataToken)
@@ -228,16 +230,53 @@ internal sealed class Dispatcher
         }
         catch (Exception ex)
         {
-            source = $"// Decompilation error:\n// {ex.Message}";
+            source = requestedTypeName == null
+                ? BuildTypeWiseReconstruction(
+                    EnumerateReconstructableTypeNames(_cache.Load(p.Assembly)),
+                    typeName => decompiler.DecompileTypeAsString(new FullTypeName(typeName)),
+                    ex)
+                : $"// Decompilation error:\n// {ex.Message}";
         }
 
         return new DecompilePayload
         {
             AssemblyPath = p.Assembly,
-            TypeName = p.TypeName,
-            MethodName = p.MethodName,
+            TypeName = requestedTypeName,
+            MethodName = requestedMethodName,
             CsharpSource = source,
         };
+    }
+
+    internal static string BuildTypeWiseReconstruction(
+        IEnumerable<string> typeNames,
+        Func<string, string> decompileType,
+        Exception? moduleError = null)
+    {
+        var blocks = new List<string>();
+
+        if (moduleError != null)
+        {
+            blocks.Add($"// Full-module decompilation failed: {moduleError.Message}");
+        }
+
+        foreach (var typeName in typeNames)
+        {
+            try
+            {
+                blocks.Add(decompileType(typeName));
+            }
+            catch (Exception ex)
+            {
+                blocks.Add($"// Failed to decompile {typeName}: {ex.Message}");
+            }
+        }
+
+        if (blocks.Count == 0)
+        {
+            blocks.Add("// Decompilation error: no reconstructable types found.");
+        }
+
+        return string.Join("\n\n", blocks);
     }
 
     public List<RuleEntry> ListRules()
@@ -384,4 +423,30 @@ internal sealed class Dispatcher
             CodeSnippet = n.CodeSnippet,
         }).ToList() ?? new(),
     };
+
+    private static string? NormalizeRequestedName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return null;
+        }
+
+        return name.Trim();
+    }
+
+    private static IEnumerable<string> EnumerateReconstructableTypeNames(AssemblyDefinition assembly)
+    {
+        foreach (var module in assembly.Modules)
+        {
+            foreach (var type in EnumerateTypes(module))
+            {
+                if (type.Name == "<Module>")
+                {
+                    continue;
+                }
+
+                yield return type.FullName.Replace('/', '+');
+            }
+        }
+    }
 }

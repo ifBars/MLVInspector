@@ -5,19 +5,25 @@ use std::path::{Path, PathBuf};
 const WORKER_ENV_VARS: [&str; 2] = ["MLVINSPECTOR_WORKER_PATH", "ILINSPECTOR_WORKER_PATH"];
 const INSPECTOR_ENV_VARS: [&str; 2] = ["MLVINSPECTOR_CLI_PATH", "ILINSPECTOR_PATH"];
 
+#[cfg(target_os = "windows")]
+const WORKER_BINARY_NAME: &str = "ILInspector.Worker.exe";
+#[cfg(not(target_os = "windows"))]
+const WORKER_BINARY_NAME: &str = "ILInspector.Worker";
+
+#[cfg(target_os = "windows")]
+const INSPECTOR_BINARY_NAME: &str = "ILInspector.exe";
+#[cfg(not(target_os = "windows"))]
+const INSPECTOR_BINARY_NAME: &str = "ILInspector";
+
 pub fn resolve_worker_path() -> PathBuf {
-    resolve_path(
-        &WORKER_ENV_VARS,
-        worker_candidates(),
-        "ILInspector.Worker.exe",
-    )
+    resolve_path(&WORKER_ENV_VARS, worker_candidates(), WORKER_BINARY_NAME)
 }
 
 pub fn resolve_inspector_path() -> PathBuf {
     resolve_path(
         &INSPECTOR_ENV_VARS,
         inspector_candidates(),
-        "ILInspector.exe",
+        INSPECTOR_BINARY_NAME,
     )
 }
 
@@ -42,48 +48,48 @@ fn resolve_path(env_vars: &[&str], candidates: Vec<PathBuf>, fallback: &str) -> 
 
 fn worker_candidates() -> Vec<PathBuf> {
     executable_candidates(
-        "ILInspector.Worker.exe",
+        WORKER_BINARY_NAME,
         &[
             &[
                 "MLVInspector.Worker",
                 "bin",
                 "Debug",
                 "net8.0",
-                "ILInspector.Worker.exe",
+                WORKER_BINARY_NAME,
             ],
             &[
                 "MLVInspector.Worker",
                 "bin",
                 "Release",
                 "net8.0",
-                "ILInspector.Worker.exe",
+                WORKER_BINARY_NAME,
             ],
-            &["MLVInspector.Worker", "ILInspector.Worker.exe"],
-            &["tools", "ILInspector.Worker.exe"],
+            &["MLVInspector.Worker", WORKER_BINARY_NAME],
+            &["tools", WORKER_BINARY_NAME],
         ],
     )
 }
 
 fn inspector_candidates() -> Vec<PathBuf> {
     executable_candidates(
-        "ILInspector.exe",
+        INSPECTOR_BINARY_NAME,
         &[
             &[
                 "MLVInspector.CLI",
                 "bin",
                 "Debug",
                 "net8.0",
-                "ILInspector.exe",
+                INSPECTOR_BINARY_NAME,
             ],
             &[
                 "MLVInspector.CLI",
                 "bin",
                 "Release",
                 "net8.0",
-                "ILInspector.exe",
+                INSPECTOR_BINARY_NAME,
             ],
-            &["MLVInspector.CLI", "ILInspector.exe"],
-            &["tools", "ILInspector.exe"],
+            &["MLVInspector.CLI", INSPECTOR_BINARY_NAME],
+            &["tools", INSPECTOR_BINARY_NAME],
         ],
     )
 }
@@ -141,7 +147,7 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::dedupe_paths;
+    use super::{dedupe_paths, executable_candidates};
     use std::path::PathBuf;
 
     #[test]
@@ -159,5 +165,22 @@ mod tests {
             deduped,
             vec![PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]
         );
+    }
+
+    #[test]
+    fn executable_candidates_include_non_windows_layout() {
+        let candidates = executable_candidates(
+            "ILInspector.Worker",
+            &[[
+                "MLVInspector.Worker",
+                "bin",
+                "Debug",
+                "net8.0",
+                "ILInspector.Worker",
+            ]
+            .as_slice()],
+        );
+
+        assert!(candidates.iter().any(|p| p.ends_with("ILInspector.Worker")));
     }
 }
