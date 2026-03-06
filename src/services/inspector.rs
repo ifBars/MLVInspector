@@ -146,8 +146,18 @@ impl InspectorService {
         assembly: String,
         opts: ExploreOptions,
     ) -> Result<AnalysisResult, AppError> {
-        let mut args = vec!["explore".to_string(), assembly.clone(), "--format".to_string(), "json".to_string()];
-        push_filter_args(&mut args, opts.type_filter, opts.method_filter, opts.namespace_filter);
+        let mut args = vec![
+            "explore".to_string(),
+            assembly.clone(),
+            "--format".to_string(),
+            "json".to_string(),
+        ];
+        push_filter_args(
+            &mut args,
+            opts.type_filter,
+            opts.method_filter,
+            opts.namespace_filter,
+        );
         run_inspector(&config.inspector_path, &args, &assembly, "explore").await
     }
 
@@ -167,13 +177,29 @@ impl InspectorService {
             "[scan] received options"
         );
 
-        let mut args = vec!["scan".to_string(), assembly.clone(), "--format".to_string(), "json".to_string()];
-        push_filter_args(&mut args, opts.type_filter, opts.method_filter, opts.namespace_filter);
+        let mut args = vec![
+            "scan".to_string(),
+            assembly.clone(),
+            "--format".to_string(),
+            "json".to_string(),
+        ];
+        push_filter_args(
+            &mut args,
+            opts.type_filter,
+            opts.method_filter,
+            opts.namespace_filter,
+        );
         if let Some(rules) = opts.include_rules {
-            for r in rules { args.push("--rules".to_string()); args.push(r); }
+            for r in rules {
+                args.push("--rules".to_string());
+                args.push(r);
+            }
         }
         if let Some(rules) = opts.exclude_rules {
-            for r in rules { args.push("--exclude-rules".to_string()); args.push(r); }
+            for r in rules {
+                args.push("--exclude-rules".to_string());
+                args.push(r);
+            }
         }
         if opts.show_clean.unwrap_or(false) {
             args.push("--show-clean".to_string());
@@ -189,8 +215,18 @@ impl InspectorService {
         assembly: String,
         opts: CompareOptions,
     ) -> Result<AnalysisResult, AppError> {
-        let mut args = vec!["compare".to_string(), assembly.clone(), "--format".to_string(), "json".to_string()];
-        push_filter_args(&mut args, opts.type_filter, opts.method_filter, opts.namespace_filter);
+        let mut args = vec![
+            "compare".to_string(),
+            assembly.clone(),
+            "--format".to_string(),
+            "json".to_string(),
+        ];
+        push_filter_args(
+            &mut args,
+            opts.type_filter,
+            opts.method_filter,
+            opts.namespace_filter,
+        );
         if let Some(rule) = opts.expected_rule {
             args.push("--expected-rule".to_string());
             args.push(rule);
@@ -251,14 +287,10 @@ async fn run_inspector(
         "[run_inspector] launching subprocess"
     );
 
-    let output = Command::new(exe)
-        .args(args)
-        .output()
-        .await
-        .map_err(|e| {
-            error!(exe = exe, err = %e, "[run_inspector] failed to launch ILInspector");
-            AppError::Process(format!("failed to launch ILInspector: {e}"))
-        })?;
+    let output = Command::new(exe).args(args).output().await.map_err(|e| {
+        error!(exe = exe, err = %e, "[run_inspector] failed to launch ILInspector");
+        AppError::Process(format!("failed to launch ILInspector: {e}"))
+    })?;
 
     let exit_code = output.status.code();
     let stdout_len = output.stdout.len();
@@ -291,9 +323,7 @@ async fn run_inspector(
 
     // Log the raw stdout so we can see what came back before JSON parsing.
     // Truncate to 4 KB to avoid flooding logs on large assemblies.
-    let stdout_preview = String::from_utf8_lossy(
-        &output.stdout[..output.stdout.len().min(4096)],
-    );
+    let stdout_preview = String::from_utf8_lossy(&output.stdout[..output.stdout.len().min(4096)]);
     debug!(
         mode = mode,
         stdout_bytes = stdout_len,
@@ -301,7 +331,9 @@ async fn run_inspector(
         "[run_inspector] raw stdout"
     );
 
-    let raw_json: serde_json::Value = match serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+    let raw_json: serde_json::Value = match serde_json::from_slice::<serde_json::Value>(
+        &output.stdout,
+    ) {
         Ok(v) => {
             // Log the top-level keys present so we can see if "findings" is there.
             if let Some(obj) = v.as_object() {
