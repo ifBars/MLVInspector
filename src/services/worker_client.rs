@@ -22,8 +22,8 @@ use tracing::{debug, error, warn};
 use crate::{
     error::AppError,
     ipc::{
-        ExploreParams, ExplorePayload, NoParams, RuleEntry, ScanParams, ScanPayload,
-        WorkerRequest, WorkerResponse,
+        DecompileParams, DecompilePayload, ExploreParams, ExplorePayload, NoParams, RuleEntry,
+        ScanParams, ScanPayload, WorkerRequest, WorkerResponse,
     },
     services::tool_paths::resolve_worker_path,
 };
@@ -213,6 +213,10 @@ impl WorkerClient {
 
     pub async fn list_rules(&self) -> Result<Vec<RuleEntry>, AppError> {
         self.call("list-rules", NoParams {}).await
+    }
+
+    pub async fn decompile(&self, params: DecompileParams) -> Result<DecompilePayload, AppError> {
+        self.call("decompile", params).await
     }
 
     /// Ask the worker to evict a cached assembly (e.g. after a file is modified).
