@@ -14,7 +14,11 @@ pub fn resolve_worker_path() -> PathBuf {
 }
 
 pub fn resolve_inspector_path() -> PathBuf {
-    resolve_path(&INSPECTOR_ENV_VARS, inspector_candidates(), "ILInspector.exe")
+    resolve_path(
+        &INSPECTOR_ENV_VARS,
+        inspector_candidates(),
+        "ILInspector.exe",
+    )
 }
 
 fn resolve_path(env_vars: &[&str], candidates: Vec<PathBuf>, fallback: &str) -> PathBuf {
@@ -64,7 +68,13 @@ fn inspector_candidates() -> Vec<PathBuf> {
     executable_candidates(
         "ILInspector.exe",
         &[
-            &["MLVInspector.CLI", "bin", "Debug", "net8.0", "ILInspector.exe"],
+            &[
+                "MLVInspector.CLI",
+                "bin",
+                "Debug",
+                "net8.0",
+                "ILInspector.exe",
+            ],
             &[
                 "MLVInspector.CLI",
                 "bin",
@@ -145,6 +155,9 @@ mod tests {
 
         let deduped = dedupe_paths(paths);
 
-        assert_eq!(deduped, vec![PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]);
+        assert_eq!(
+            deduped,
+            vec![PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]
+        );
     }
 }

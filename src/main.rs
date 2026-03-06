@@ -6,6 +6,7 @@
 use dioxus::prelude::*;
 
 mod app;
+mod components;
 mod error;
 mod ipc;
 mod services;

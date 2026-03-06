@@ -11,12 +11,12 @@
 use std::sync::Arc;
 
 use serde::Serialize;
+use std::collections::HashMap;
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, Command},
-    sync::{Mutex, oneshot},
+    sync::{oneshot, Mutex},
 };
-use std::collections::HashMap;
 use tracing::{debug, error, warn};
 
 use crate::{
@@ -55,22 +55,25 @@ pub struct WorkerClient {
 }
 
 struct WorkerInner {
-    config:  WorkerConfig,
-    state:   Option<WorkerState>,
+    config: WorkerConfig,
+    state: Option<WorkerState>,
 }
 
 struct WorkerState {
-    stdin:   ChildStdin,
+    stdin: ChildStdin,
     next_id: u64,
     pending: PendingMap,
     // Keep the Child alive so it isn't killed on drop.
-    _child:  Child,
+    _child: Child,
 }
 
 impl WorkerClient {
     pub fn new(config: WorkerConfig) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(WorkerInner { config, state: None })),
+            inner: Arc::new(Mutex::new(WorkerInner {
+                config,
+                state: None,
+            })),
         }
     }
 
@@ -86,8 +89,8 @@ impl WorkerClient {
         let mut child = {
             let mut cmd = Command::new(exe);
             cmd.stdin(std::process::Stdio::piped())
-               .stdout(std::process::Stdio::piped())
-               .stderr(std::process::Stdio::piped());
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
 
             // Hide the console window on Windows.
             #[cfg(target_os = "windows")]
@@ -97,12 +100,16 @@ impl WorkerClient {
             }
 
             cmd.spawn()
-               .map_err(|e| AppError::Process(format!("failed to spawn worker: {e}")))?
+                .map_err(|e| AppError::Process(format!("failed to spawn worker: {e}")))?
         };
 
-        let stdin  = child.stdin.take()
+        let stdin = child
+            .stdin
+            .take()
             .ok_or_else(|| AppError::Process("worker stdin not available".into()))?;
-        let stdout = child.stdout.take()
+        let stdout = child
+            .stdout
+            .take()
             .ok_or_else(|| AppError::Process("worker stdout not available".into()))?;
 
         // Forward stderr to tracing so we can see [worker] log lines.
