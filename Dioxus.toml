@@ -2,7 +2,7 @@
 name = "MLVInspector"
 
 [bundle]
-identifier = "com.ghost.mlvinspector"
+identifier = "com.bars.mlvinspector"
 icon = ["assets/icon.png"]
 category = "DeveloperTool"
 

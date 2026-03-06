@@ -2427,8 +2427,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "mlvinspector-dioxus"
-version = "0.1.0"
+name = "mlvinspector"
+version = "1.0.0"
 dependencies = [
  "bytes",
  "dioxus",

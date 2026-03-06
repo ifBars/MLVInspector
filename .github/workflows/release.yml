@@ -1,0 +1,143 @@
+name: Auto Release
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'Cargo.toml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from Cargo.toml
+        id: cargo_version
+        run: |
+          VERSION=$(grep -m1 '^version = "' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Check if tag exists
+        id: check
+        run: |
+          TAG="v${{ steps.cargo_version.outputs.VERSION }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists, skipping release"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          else
+            echo "Tag $TAG does not exist, will create release"
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          fi
+          echo "version=${{ steps.cargo_version.outputs.VERSION }}" >> $GITHUB_OUTPUT
+        shell: bash
+
+  build-and-release:
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Dioxus CLI
+        run: cargo install dioxus-cli
+
+      - name: Build .NET Worker
+        run: dotnet build MLVInspector.Worker/ILInspector.Worker.csproj -c Release
+        shell: bash
+
+      - name: Publish .NET Worker
+        run: dotnet publish MLVInspector.Worker/ILInspector.Worker.csproj -c Release -o worker-publish --no-build
+        shell: bash
+
+      - name: Build Dioxus App
+        run: dx build --platform desktop --release
+
+      - name: Prepare release package
+        run: |
+          mkdir -p release-package
+          cp -r dist/MLVInspector/* release-package/ 2>/dev/null || cp target/release/mlvinspector.exe release-package/ 2>/dev/null || true
+          cp -r worker-publish/* release-package/ 2>/dev/null || true
+        shell: bash
+
+      - name: Create ZIP archive
+        run: |
+          cd release-package
+          7z a -tzip ../MLVInspector-${{ needs.check-version.outputs.version }}-windows.zip *
+        shell: bash
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
+          echo "## MLVInspector ${{ needs.check-version.outputs.version }}" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "### Changes" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            git log --pretty=format:"- %s" $PREV_TAG..HEAD >> $GITHUB_OUTPUT
+          else
+            git log --pretty=format:"- %s" HEAD~10..HEAD >> $GITHUB_OUTPUT 2>/dev/null || echo "- Initial release" >> $GITHUB_OUTPUT
+          fi
+          echo "" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Create tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ needs.check-version.outputs.version }}" -m "Release v${{ needs.check-version.outputs.version }}"
+          git push origin "v${{ needs.check-version.outputs.version }}"
+        shell: bash
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-version.outputs.version }}
+          name: MLVInspector v${{ needs.check-version.outputs.version }}
+          body: ${{ steps.changelog.outputs.CHANGELOG }}
+          draft: false
+          prerelease: ${{ contains(needs.check-version.outputs.version, '-') }}
+          files: |
+            MLVInspector-${{ needs.check-version.outputs.version }}-windows.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

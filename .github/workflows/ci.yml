@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Dioxus CLI
+        run: cargo install dioxus-cli
+
+      - name: Build .NET Worker
+        run: dotnet build MLVInspector.Worker/ILInspector.Worker.csproj -c Release
+        shell: bash
+
+      - name: Publish .NET Worker
+        run: dotnet publish MLVInspector.Worker/ILInspector.Worker.csproj -c Release -o worker-publish --no-build
+        shell: bash
+
+      - name: Build Dioxus App
+        run: dx build --platform desktop --release
+
+      - name: Prepare artifacts
+        run: |
+          mkdir -p artifacts
+          cp -r target/release/mlvinspector.exe artifacts/ 2>/dev/null || cp -r dist/MLVInspector/* artifacts/ 2>/dev/null || true
+          cp -r worker-publish/* artifacts/ 2>/dev/null || true
+        shell: bash
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: MLVInspector-windows
+          path: artifacts/
+          retention-days: 7
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
