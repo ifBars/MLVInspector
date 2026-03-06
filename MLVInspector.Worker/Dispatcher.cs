@@ -1,3 +1,6 @@
+using ICSharpCode.Decompiler;
+using ICSharpCode.Decompiler.CSharp;
+using ICSharpCode.Decompiler.TypeSystem;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using MLVScan;
@@ -167,6 +170,73 @@ internal sealed class Dispatcher
             Findings = filteredList.Select(MapFinding).ToList(),
             CallChains = dto.CallChains?.Select(MapCallChain).ToList(),
             DataFlows = dto.DataFlows?.Select(MapDataFlow).ToList(),
+        };
+    }
+
+    public DecompilePayload Decompile(DecompileParams p)
+    {
+        var settings = new DecompilerSettings
+        {
+            ThrowOnAssemblyResolveErrors = false,
+        };
+
+        var decompiler = new CSharpDecompiler(p.Assembly, settings);
+        string source;
+
+        try
+        {
+            if (p.TypeName != null)
+            {
+                // Mono.Cecil uses '/' for nested types; ICSharpCode.Decompiler
+                // uses '+' in its reflection-style names (same as System.Reflection).
+                var reflectionName = p.TypeName.Replace('/', '+');
+                var fullName = new FullTypeName(reflectionName);
+
+                if (p.MethodName != null)
+                {
+                    // FindType handles both top-level and nested types when
+                    // given a reflection-style name (dots for namespaces, + for
+                    // nested classes).
+                    var typeDef = decompiler.TypeSystem
+                        .FindType(fullName)
+                        .GetDefinition();
+
+                    if (typeDef != null)
+                    {
+                        var method = typeDef.Methods
+                            .FirstOrDefault(m => m.Name == p.MethodName);
+
+                        source = method != null
+                            ? decompiler.DecompileAsString(method.MetadataToken)
+                            : decompiler.DecompileTypeAsString(fullName);
+                    }
+                    else
+                    {
+                        // FindType returned null — decompile the whole type.
+                        source = decompiler.DecompileTypeAsString(fullName);
+                    }
+                }
+                else
+                {
+                    source = decompiler.DecompileTypeAsString(fullName);
+                }
+            }
+            else
+            {
+                source = decompiler.DecompileWholeModuleAsString();
+            }
+        }
+        catch (Exception ex)
+        {
+            source = $"// Decompilation error:\n// {ex.Message}";
+        }
+
+        return new DecompilePayload
+        {
+            AssemblyPath = p.Assembly,
+            TypeName = p.TypeName,
+            MethodName = p.MethodName,
+            CsharpSource = source,
         };
     }
 

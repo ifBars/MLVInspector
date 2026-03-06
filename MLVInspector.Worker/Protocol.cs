@@ -54,6 +54,36 @@ public sealed class ScanParams
     public bool ShowClean { get; set; }
 }
 
+public sealed class DecompileParams
+{
+    [JsonPropertyName("assembly")]
+    public string Assembly { get; set; } = "";
+
+    /// <summary>Fully-qualified type name, e.g. "MyNs.MyClass". If null, decompiles the whole assembly.</summary>
+    [JsonPropertyName("typeName")]
+    public string? TypeName { get; set; }
+
+    /// <summary>Method name within the type. If null, decompiles the whole type.</summary>
+    [JsonPropertyName("methodName")]
+    public string? MethodName { get; set; }
+}
+
+public sealed class DecompilePayload
+{
+    [JsonPropertyName("assemblyPath")]
+    public string AssemblyPath { get; set; } = "";
+
+    [JsonPropertyName("typeName")]
+    public string? TypeName { get; set; }
+
+    [JsonPropertyName("methodName")]
+    public string? MethodName { get; set; }
+
+    /// <summary>The reconstructed C# source code.</summary>
+    [JsonPropertyName("csharpSource")]
+    public string CsharpSource { get; set; } = "";
+}
+
 public sealed class CompareParams
 {
     [JsonPropertyName("assembly")]
@@ -358,13 +388,16 @@ public sealed class RuleEntry
 [JsonSerializable(typeof(WorkerRequest))]
 [JsonSerializable(typeof(WorkerResponse<ExplorePayload>))]
 [JsonSerializable(typeof(WorkerResponse<ScanPayload>))]
+[JsonSerializable(typeof(WorkerResponse<DecompilePayload>))]
 [JsonSerializable(typeof(WorkerResponse<List<RuleEntry>>))]
 [JsonSerializable(typeof(WorkerResponse<object>))]
 [JsonSerializable(typeof(ExploreParams))]
 [JsonSerializable(typeof(ScanParams))]
+[JsonSerializable(typeof(DecompileParams))]
 [JsonSerializable(typeof(CompareParams))]
 [JsonSerializable(typeof(ExplorePayload))]
 [JsonSerializable(typeof(ScanPayload))]
+[JsonSerializable(typeof(DecompilePayload))]
 [JsonSerializable(typeof(List<RuleEntry>))]
 [JsonSerializable(typeof(string))]
 internal partial class WorkerJsonContext : JsonSerializerContext

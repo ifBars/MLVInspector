@@ -41,6 +41,16 @@ pub struct ScanParams {
     pub show_clean: bool,
 }
 
+#[derive(Debug, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DecompileParams {
+    pub assembly: String,
+    /// Fully-qualified type name. `None` = decompile whole assembly.
+    pub type_name: Option<String>,
+    /// Method name within the type. `None` = decompile whole type.
+    pub method_name: Option<String>,
+}
+
 /// Empty params for methods that don't need any.
 #[derive(Debug, Serialize)]
 pub struct NoParams {}
@@ -206,4 +216,14 @@ pub struct RuleEntry {
     pub rule_id: String,
     pub description: String,
     pub severity: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DecompilePayload {
+    pub assembly_path: String,
+    pub type_name: Option<String>,
+    pub method_name: Option<String>,
+    /// The reconstructed C# source code.
+    pub csharp_source: String,
 }

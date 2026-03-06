@@ -2,9 +2,9 @@ use dioxus::prelude::*;
 use dioxus::html::HasFileData;
 use dioxus_desktop::tao::event::{Event, WindowEvent};
 use dioxus_desktop::{use_wry_event_handler, window};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::ipc::{ExploreParams, ScanParams};
+use crate::ipc::{DecompileParams, ExploreParams, ScanParams};
 use crate::state::AppState;
 use crate::types::{ActiveMode, AnalysisEntry, AnalysisResult, AnalysisStatus};
 
@@ -62,6 +62,13 @@ struct IlTab {
     method_name: Option<String>,
     title: String,
     subtitle: String,
+}
+
+/// Toggle between raw IL and decompiled C# source in the main view panel.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ViewMode {
+    Il,
+    CSharp,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -127,6 +134,10 @@ pub fn App() -> Element {
     let mut explorer_width = use_signal(|| 260.0);
     let mut findings_width = use_signal(|| 300.0);
     let mut active_resize = use_signal(|| None::<ActiveResize>);
+    let mut view_mode = use_signal(|| ViewMode::Il);
+    // Cache: key = "type::method" or "type::" → C# source string
+    let mut csharp_cache: Signal<HashMap<String, String>> = use_signal(HashMap::new);
+    let mut csharp_loading = use_signal(|| false);
 
     // Scroll to highlighted IL offset when method changes
     use_effect(move || {
@@ -139,6 +150,57 @@ pub fn App() -> Element {
                 let _ = document::eval(&js).await;
             });
         }
+    });
+
+    // Trigger C# decompilation when switching to C# view or changing the active tab.
+    use_effect(move || {
+        let mode = *view_mode.read();
+        if mode != ViewMode::CSharp {
+            return;
+        }
+
+        let active_id  = active_tab_id.read().clone();
+        let tabs       = open_tabs.read().clone();
+        let sel_id     = state.selected_id.read().clone();
+        let assemblies = state.assemblies.read().clone();
+
+        let Some(tab_id) = active_id else { return; };
+        let Some(tab)    = tabs.into_iter().find(|t| t.id == tab_id) else { return; };
+        let Some(asm_id) = sel_id else { return; };
+        let Some(asm)    = assemblies.into_iter().find(|a| a.id == asm_id) else { return; };
+
+        let assembly_path = asm.path.clone();
+        let type_name     = tab.type_name.clone();
+        let method_name   = tab.method_name.clone();
+        let cache_key = format!(
+            "{}::{}::{}",
+            assembly_path,
+            type_name,
+            method_name.as_deref().unwrap_or("")
+        );
+
+        if csharp_cache.read().contains_key(&cache_key) {
+            return;
+        }
+
+        let worker = state.worker.read().clone();
+        csharp_loading.set(true);
+
+        spawn(async move {
+            let result = worker.decompile(DecompileParams {
+                assembly:    assembly_path,
+                type_name:   Some(type_name),
+                method_name,
+            }).await;
+
+            let source = match result {
+                Ok(payload) => payload.csharp_source,
+                Err(e)      => format!("// Decompilation error:\n// {e}"),
+            };
+
+            csharp_cache.write().insert(cache_key, source);
+            csharp_loading.set(false);
+        });
     });
 
     // Load rules on startup
@@ -1349,7 +1411,9 @@ pub fn App() -> Element {
                     ),
                     div {
                         class: "panel-header",
-                        span { "IL View" }
+                        span {
+                            if view_mode() == ViewMode::CSharp { "C# View" } else { "IL View" }
+                        }
                         if show_class_overview {
                             if let Some(type_name) = selected_type_name.as_ref() {
                                 span {
@@ -1369,6 +1433,36 @@ pub fn App() -> Element {
                                      background: rgba(110, 231, 183, 0.08);"
                                 ),
                                 "{m.type_name}.{m.method_name}"
+                            }
+                        }
+                        // IL / C# view-mode toggle
+                        div {
+                            style: format!(
+                                "margin-left: auto; display: flex; align-items: center; gap: 2px; \
+                                 background: {C_BG_BASE}; border: 1px solid {C_BORDER}; \
+                                 border-radius: 6px; padding: 2px;"
+                            ),
+                            button {
+                                style: format!(
+                                    "font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 4px; \
+                                     cursor: pointer; border: none; transition: all 120ms; \
+                                     background: {}; color: {};",
+                                    if view_mode() == ViewMode::Il { C_BG_ELEVATED } else { "transparent" },
+                                    if view_mode() == ViewMode::Il { C_TEXT_PRIMARY } else { C_TEXT_MUTED }
+                                ),
+                                onclick: move |_| view_mode.set(ViewMode::Il),
+                                "IL"
+                            }
+                            button {
+                                style: format!(
+                                    "font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 4px; \
+                                     cursor: pointer; border: none; transition: all 120ms; \
+                                     background: {}; color: {};",
+                                    if view_mode() == ViewMode::CSharp { C_BG_ELEVATED } else { "transparent" },
+                                    if view_mode() == ViewMode::CSharp { C_TEXT_PRIMARY } else { C_TEXT_MUTED }
+                                ),
+                                onclick: move |_| view_mode.set(ViewMode::CSharp),
+                                "C#"
                             }
                         }
                     }
@@ -1463,6 +1557,7 @@ pub fn App() -> Element {
                         }
                         div {
                         style: "flex: 1; overflow-y: auto; padding: 10px 14px;",
+                        if view_mode() == ViewMode::Il {
                         if show_class_overview {
                             if let Some(type_name) = selected_type_name.as_ref() {
                                 div {
@@ -1636,6 +1731,75 @@ pub fn App() -> Element {
                                 }
                                 p { "Select a method to view its IL instructions" }
                             }
+                        }
+                        } else {
+                        // ── C# decompiled source view ─────────────────────────
+                        {
+                            let cs_key = active_tab.as_ref().and_then(|tab| {
+                                selected_assembly.map(|asm| {
+                                    format!(
+                                        "{}::{}::{}",
+                                        asm.path,
+                                        tab.type_name,
+                                        tab.method_name.as_deref().unwrap_or("")
+                                    )
+                                })
+                            });
+                            let cs_source = cs_key.as_ref()
+                                .and_then(|k| csharp_cache.read().get(k).cloned());
+                            let is_cs_loading = *csharp_loading.read();
+
+                            rsx! {
+                                if is_cs_loading {
+                                    div {
+                                        class: "empty-state",
+                                        svg {
+                                            width: "36", height: "36", view_box: "0 0 24 24",
+                                            fill: "none", stroke: C_ACCENT_GREEN,
+                                            stroke_width: "1.5",
+                                            path { d: "M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" }
+                                        }
+                                        p {
+                                            style: format!("color: {C_TEXT_MUTED}; font-size: 12px;"),
+                                            "Decompiling..."
+                                        }
+                                    }
+                                } else if let Some(source) = cs_source {
+                                    pre {
+                                        style: format!(
+                                            "font-family: {FONT_MONO}; font-size: 11px; \
+                                             line-height: 1.65; color: {C_TEXT_SECONDARY}; \
+                                             white-space: pre-wrap; word-break: break-word; \
+                                             padding: 4px 0;"
+                                        ),
+                                        "{source}"
+                                    }
+                                } else if active_tab.is_some() {
+                                    div {
+                                        class: "empty-state",
+                                        p {
+                                            style: format!("color: {C_TEXT_MUTED}; font-size: 12px;"),
+                                            "Waiting for decompilation..."
+                                        }
+                                    }
+                                } else {
+                                    div {
+                                        class: "empty-state",
+                                        svg {
+                                            width: "44", height: "44", view_box: "0 0 24 24",
+                                            fill: "none", stroke: C_ACCENT_GREEN,
+                                            stroke_width: "1.5",
+                                            path { d: "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" }
+                                            polyline { points: "14 2 14 8 20 8" }
+                                            line { x1: "16", y1: "13", x2: "8", y2: "13" }
+                                            line { x1: "16", y1: "17", x2: "8", y2: "17" }
+                                            polyline { points: "10 9 9 9 8 9" }
+                                        }
+                                        p { "Select a type or method to decompile it to C#" }
+                                    }
+                                }
+                            }
+                        }
                         }
                         }
                     }

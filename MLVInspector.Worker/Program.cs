@@ -88,6 +88,15 @@ static async Task DispatchAsync(WorkerRequest req, Dispatcher dispatcher, Stream
                 break;
             }
 
+            case "decompile":
+            {
+                var p = req.Params.Deserialize(WorkerJsonContext.Default.DecompileParams)
+                    ?? throw new ArgumentException("missing decompile params");
+                var payload = dispatcher.Decompile(p);
+                await WriteOkAsync(stdout, req.Id, payload, WorkerJsonContext.Default.DecompilePayload);
+                break;
+            }
+
             case "list-rules":
             {
                 var payload = dispatcher.ListRules();
