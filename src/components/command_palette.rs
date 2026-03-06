@@ -38,7 +38,12 @@ pub fn CommandPalette(
     let analysis_entries = state.analysis_entries.read().clone();
     let has_exported_project = state.last_export_path.read().is_some();
     let entries = if is_open() {
-        build_palette_entries(&assemblies, &analysis_entries, has_exported_project, &query())
+        build_palette_entries(
+            &assemblies,
+            &analysis_entries,
+            has_exported_project,
+            &query(),
+        )
     } else {
         Vec::new()
     };

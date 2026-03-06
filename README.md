@@ -36,7 +36,7 @@ It is being developed specifically for malware reverse engineering and malware a
 - View decompiled C# alongside IL output
 - Run explore + scan analysis through `ILInspector.Worker`
 - Review findings with rule metadata and severity information
-- Export the selected assembly into a decompiled C# project layout with namespace folders, per-type files, a generated `.csproj`, and analysis JSON
+- Export the selected assembly into a decompiled C# project layout with namespace folders, per-type files, inferred assembly metadata, a generated `.csproj`, analysis JSON, and quick-open access to the last export folder
 
 ## Positioning
 
