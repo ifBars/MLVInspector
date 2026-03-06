@@ -5,8 +5,10 @@ use dioxus_desktop::window;
 use crate::state::AppState;
 
 use super::analysis::run_analysis;
-use super::theme::{C_ACCENT_GREEN, C_BORDER, C_TEXT_MUTED, C_TEXT_PRIMARY, FONT_MONO};
+use super::theme::{C_ACCENT_GREEN, C_BORDER, C_TEXT_PRIMARY};
 use super::view_models::IlTab;
+
+const APP_ICON: Asset = asset!("/assets/icon.png");
 
 #[component]
 pub fn TitleBar(
@@ -39,13 +41,12 @@ pub fn TitleBar(
             div {
                 style: "display: flex; align-items: center; gap: 10px;",
 
-                // Traffic-light dot
-                div {
-                    style: format!(
-                        "width: 9px; height: 9px; border-radius: 50%; \
-                         background: {C_ACCENT_GREEN}; \
-                         border: 1px solid {C_BORDER};"
-                    )
+                img {
+                    src: APP_ICON,
+                    alt: "MLVInspector icon",
+                    width: "28",
+                    height: "28",
+                    style: "width: 28px; height: 28px; object-fit: contain; display: block;"
                 }
                 span {
                     style: format!(
@@ -53,13 +54,6 @@ pub fn TitleBar(
                          color: {C_TEXT_PRIMARY};"
                     ),
                     "MLVInspector"
-                }
-                span {
-                    style: format!(
-                        "font-size: 11px; color: {C_TEXT_MUTED}; \
-                         font-family: {FONT_MONO};"
-                    ),
-                    ".Dioxus"
                 }
                 if is_running {
                     span {

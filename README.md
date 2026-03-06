@@ -1,230 +1,141 @@
 # MLVInspector
 
-**MLVInspector** is a Rust + Dioxus desktop frontend for inspecting .NET assemblies and visualizing MLVScan / ILInspector analysis results.
+`MLVInspector` is a Rust + Dioxus desktop application for inspecting .NET assemblies.
 
-It provides a desktop UI over a long-lived `ILInspector.Worker` subprocess, letting you open an assembly, explore its methods and IL, and review scan findings in a richer interface than a raw CLI response.
+Think of it as a lightweight `dnSpy` / `ILSpy` style workflow focused on:
 
-This repository now includes the worker project under `MLVInspector.Worker/` so the desktop app and sidecar process can live in the same GitHub repo.
+- browsing assemblies, namespaces, types, and methods
+- viewing IL and decompiled C# side by side
+- jumping from findings back into code
+- running `MLVScan`-powered analysis through the bundled worker
 
-## What It Does
+It is not trying to match the full feature surface of `dnSpy` or `ILSpy`. The goal is a narrower desktop analyst experience with tighter `MLVScan` integration, a persistent worker process, and a modern Rust UI/runtime.
 
-- Opens `.NET` assemblies from the desktop UI or via drag and drop.
-- Talks to `ILInspector.Worker` over newline-delimited JSON (NDJSON).
-- Runs explore and scan operations for the selected assembly.
-- Shows namespaces, types, methods, and IL instructions.
-- Displays rule metadata and scan findings with severity information.
-- Keeps worker orchestration in Rust instead of shipping UI logic through a web stack.
+It is being developed specifically for malware reverse engineering and malware analysis workflows, especially around Unity mod malware. In that space, attackers often steal legitimate Unity game mods, modify them, and add runtime payload-loader behavior that can slip past common static scanners. `MLVInspector`, as part of the `MLVScan` ecosystem, is meant to make that review loop faster by combining familiar assembly inspection with `MLVScan`-driven findings.
 
-## Current Status
+## Why Use It
 
-This project is functional, but still early in its architecture evolution.
+- Familiar inspection workflow for .NET assemblies
+- Built-in `MLVScan` integration instead of bolting scan output on afterward
+- Rust desktop frontend with a responsive, native-feeling UI
+- Long-lived worker subprocess avoids repeated tool startup overhead
+- Unified explorer sidebar for assemblies plus namespace/type/method navigation
 
-- The app is currently implemented as a Dioxus desktop binary crate.
-- The UI works against a long-lived worker process instead of a one-shot CLI invocation.
-- `src/app.rs` is currently much too large and should be treated as refactor debt.
-- The maintainability direction for the project is to split UI, view-model, and async workflow logic into smaller modules.
-- The repository currently has no committed tests (`cargo test -- --list` reports `0 tests`).
+## Primary Use Case
 
-## Why This Exists
+- reverse engineering suspicious .NET assemblies that act as loaders or stagers
+- triaging stolen or trojanized Unity mods that bypass tools like `VirusTotal`
+- inspecting suspicious runtime behavior such as `Process.Start`, PowerShell execution, download-and-drop flows, and shell execution chains
+- reviewing IL and decompiled C# around `MLVScan` findings to understand how a payload is fetched or launched
 
-The MLVScan ecosystem already has scanning engines and CLI-oriented tooling. This project focuses on the missing desktop analyst experience:
+## Current Feature Set
 
-- browse an assembly visually
-- inspect IL quickly
-- pivot between findings and code locations
-- work with a persistent subprocess instead of repeated process startup
-- move toward a maintainable Rust desktop architecture for analysis tooling
+- Open `.dll` and `.exe` assemblies from the toolbar or drag and drop
+- Explore namespaces, types, methods, and IL
+- View decompiled C# alongside IL output
+- Run explore + scan analysis through `ILInspector.Worker`
+- Review findings with rule metadata and severity information
 
-## High-Level Architecture
+## Positioning
 
-```text
-+------------------------+
-| Dioxus Desktop UI      |
-| Rust app state         |
-| panels / IL viewer     |
-+-----------+------------+
-            |
-            | typed requests/responses
-            v
-+------------------------+
-| WorkerClient           |
-| tokio subprocess layer |
-| NDJSON request routing |
-+-----------+------------+
-            |
-            v
-+------------------------+
-| ILInspector.Worker     |
-| assembly analysis      |
-| rule listing / scan    |
-+------------------------+
-```
+Compared with `dnSpy` / `ILSpy`:
 
-Key boundaries:
+- fewer features overall
+- much tighter focus on static analysis review
+- built around `MLVScan` workflows
+- Rust frontend orchestration, with the analysis engine living in the worker
 
-- The desktop UI is written in Rust with Dioxus.
-- Worker communication is typed in `src/ipc.rs`.
-- Process orchestration lives in `src/services/worker_client.rs`.
-- Assemblies are passed to the worker by file path; they are not loaded into this process.
-
-## Repository Layout
+## Architecture
 
 ```text
-src/
-|- main.rs                    # Entry point, tracing setup, window config
-|- app.rs                     # Current top-level composition root (too large)
-|- state.rs                   # Global AppState backed by Dioxus signals
-|- ipc.rs                     # Worker protocol request/response types
-|- types.rs                   # App-facing domain and UI types
-|- error.rs                   # Shared AppError enum
-`- services/
-   |- worker_client.rs        # Active long-lived worker subprocess client
-   `- inspector.rs            # Legacy one-shot CLI wrapper kept for reference
-
-MLVInspector.Worker/
-|- ILInspector.Worker.csproj  # .NET worker project bundled with this repo
-|- Program.cs                 # NDJSON worker entry point
-|- Dispatcher.cs              # Explore / scan / list-rules handling
-|- Protocol.cs                # Worker-side protocol DTOs
-`- AssemblyCache.cs           # Mono.Cecil assembly cache
+MLVInspector (Rust + Dioxus desktop UI)
+    -> WorkerClient (typed NDJSON subprocess bridge)
+        -> ILInspector.Worker (.NET analysis worker)
+            -> Explore + Scan results from MLVScan/inspection pipeline
 ```
 
 ## Requirements
 
-Before running the app locally, make sure you have:
+Before building locally, install:
 
-- Rust toolchain installed
-- Dioxus CLI installed and available on `PATH` for `dx` commands
-- A valid local build of `ILInspector.Worker`
-- Windows environment support if you want to match the current default configuration
+- Rust toolchain
+- .NET SDK 8+
+- Dioxus CLI on `PATH` for `dx` commands
+- Windows environment support for the current desktop setup
 
-Important notes:
+Notes:
 
-- `WorkerConfig::default()` now tries environment variables plus repo-relative discovery before falling back to `ILInspector.Worker.exe`.
-- The legacy `InspectorConfig::default()` now does the same for `ILInspector.exe`.
-- The current code assumes Windows in a few places, including window configuration and worker startup behavior.
+- `WorkerConfig::default()` prefers env vars plus repo-relative discovery
+- the current implementation is still Windows-oriented in a few places
+- the worker currently targets `MLVScan.Core` from NuGet by default
 
-That said, the Rust app now tries to discover the worker automatically from common repo and build-output locations before falling back to a plain executable name.
+## Build From Source
 
-## Quick Start
+Build order matters.
 
-### 1. Verify the toolchain
+### 1. Build the worker first
 
 ```bash
-cargo check
 dotnet build MLVInspector.Worker/ILInspector.Worker.csproj
 ```
 
-### 2. Run the desktop app
+If you are intentionally working against a sibling checkout of `MLVScan.Core`:
+
+```bash
+dotnet build MLVInspector.Worker/ILInspector.Worker.csproj -p:LocalCoreBuild=true
+```
+
+### 2. Build the Dioxus app
+
+```bash
+cargo check
+dx build --platform desktop
+```
+
+Optional release build:
+
+```bash
+cargo build --release
+```
+
+## Run Locally
 
 ```bash
 dx serve --platform desktop
 ```
 
-### 3. Open an assembly
-
-You can open an assembly by:
+Then open an assembly by:
 
 - dragging a file into the window
-- using the desktop file picker from the toolbar
+- using the toolbar file picker
 
-Once loaded, the app will run explore and scan requests against the worker and populate the UI.
+## Worker Discovery
 
-## Common Development Commands
-
-### Fast compile checks
-
-```bash
-cargo check
-cargo check --all-targets
-```
-
-### Formatting and linting
-
-```bash
-cargo fmt --all
-cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-```
-
-### Running tests
-
-```bash
-cargo test
-cargo test -- --list
-cargo test <substring>
-cargo test <module>::tests::<test_name> -- --exact
-cargo test --bin mlvinspector-dioxus <substring>
-cargo test <substring> -- --nocapture
-```
-
-### Building
-
-```bash
-dotnet build MLVInspector.Worker/ILInspector.Worker.csproj
-dx build --platform desktop
-cargo build --release
-```
-
-## Worker Path Resolution
-
-The desktop app now looks for the worker in this order:
+The desktop app looks for the worker in this order:
 
 - `MLVINSPECTOR_WORKER_PATH`
 - `ILINSPECTOR_WORKER_PATH`
-- common repo-relative locations such as `MLVInspector.Worker/bin/Debug/net8.0/ILInspector.Worker.exe`
-- a plain `ILInspector.Worker.exe` on `PATH`
+- repo-relative build output locations such as `MLVInspector.Worker/bin/Debug/net8.0/ILInspector.Worker.exe`
+- `ILInspector.Worker.exe` on `PATH`
 
-If you need to override discovery explicitly:
+To override discovery explicitly on Windows:
 
 ```bash
 set MLVINSPECTOR_WORKER_PATH=C:\path\to\ILInspector.Worker.exe
 dx serve --platform desktop
 ```
 
-## How the App Works
+## Development Notes
 
-On startup, the app creates global Dioxus state and initializes a `WorkerClient`.
-
-When you open an assembly:
-
-1. the assembly is added to app state
-2. the UI kicks off worker `explore` and `scan` requests
-3. both responses are captured into a combined typed `AnalysisResult`
-4. the explorer panel shows namespaces, types, methods, and IL
-5. the findings panel shows rule-triggered results and severity information
-
-The worker stays alive across requests, which reduces repeated startup cost and keeps the desktop flow responsive.
-
-## Development Direction
-
-This repository should move toward a more maintainable, agent-friendly engineering shape.
-
-- Do not grow `src/app.rs` further unless absolutely necessary.
-- Prefer extracting named UI regions into `src/components/`, `src/panels/`, or `src/ui/`.
-- Prefer pure transformation logic in helper or view-model modules.
-- Prefer async workflows in `src/services/`, `src/actions/`, or `src/controllers/`.
-- Add focused tests whenever non-trivial logic is extracted.
-
-If you are making changes in this repo, read `AGENTS.md` first.
+- keep `src/app.rs` as a composition root, not a new monolith
+- prefer adding UI to focused modules under `src/components/`
+- prefer pure helpers for grouping, sorting, mapping, and tab/view-model logic
+- prefer tests near newly extracted pure logic
 
 ## Known Limitations
 
-- The project currently has no committed automated tests.
-- The default worker path is machine-specific.
-- The worker currently targets `MLVScan.Core` from NuGet by default; local sibling-core development is still supported via `-p:LocalCoreBuild=true`.
-- The codebase is still heavily centered around a very large `src/app.rs` file.
-- Some architecture placeholders exist for modes like `compare` and `analyze-reflect`, but the desktop UX is still primarily centered on explore + scan.
-- The current implementation is Windows-oriented.
-
-## Contributing
-
-Contributions are welcome, especially in these areas:
-
-- extracting maintainable UI components from `src/app.rs`
-- improving worker configuration and portability
-- adding unit tests for extracted helpers and protocol logic
-- improving findings navigation, IL navigation, and analysis workflows
-- tightening the boundary between worker wire types and app-facing view models
-
-When contributing, favor small, testable extractions over adding more inline logic to the main app module.
+- feature scope is still much smaller than `dnSpy` / `ILSpy`
+- test coverage is still limited
+- worker discovery is improved, but local build output still matters
+- desktop behavior is currently Windows-oriented
+- some placeholder architecture exists for future modes beyond the main explore + scan flow

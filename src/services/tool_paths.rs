@@ -124,8 +124,6 @@ fn push_candidate_set(
     file_name: &str,
     relative_paths: &[&[&str]],
 ) {
-    candidates.push(base.join(file_name));
-
     for relative in relative_paths {
         let mut candidate = base.to_path_buf();
         for segment in *relative {
@@ -133,6 +131,8 @@ fn push_candidate_set(
         }
         candidates.push(candidate);
     }
+
+    candidates.push(base.join(file_name));
 }
 
 fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -147,7 +147,8 @@ fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{dedupe_paths, executable_candidates};
+    use super::{dedupe_paths, executable_candidates, push_candidate_set};
+    use std::path::Path;
     use std::path::PathBuf;
 
     #[test]
@@ -182,5 +183,42 @@ mod tests {
         );
 
         assert!(candidates.iter().any(|p| p.ends_with("ILInspector.Worker")));
+    }
+
+    #[test]
+    fn push_candidate_set_prefers_repo_layouts_before_sibling_binary() {
+        let mut candidates = Vec::new();
+
+        push_candidate_set(
+            &mut candidates,
+            Path::new("target/debug"),
+            "ILInspector.Worker.exe",
+            &[
+                &[
+                    "MLVInspector.Worker",
+                    "bin",
+                    "Debug",
+                    "net8.0",
+                    "ILInspector.Worker.exe",
+                ],
+                &["tools", "ILInspector.Worker.exe"],
+            ],
+        );
+
+        assert_eq!(
+            candidates,
+            vec![
+                PathBuf::from("target/debug")
+                    .join("MLVInspector.Worker")
+                    .join("bin")
+                    .join("Debug")
+                    .join("net8.0")
+                    .join("ILInspector.Worker.exe"),
+                PathBuf::from("target/debug")
+                    .join("tools")
+                    .join("ILInspector.Worker.exe"),
+                PathBuf::from("target/debug").join("ILInspector.Worker.exe"),
+            ]
+        );
     }
 }

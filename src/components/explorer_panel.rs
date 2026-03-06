@@ -1,4 +1,4 @@
-/// Middle-left panel: hierarchical namespace → type → method tree.
+/// Left explorer panel: open assemblies plus namespace → type → method tree.
 use std::collections::BTreeSet;
 
 use dioxus::prelude::*;
@@ -14,7 +14,7 @@ use super::view_models::{IlTab, IlTabKind};
 
 #[component]
 pub fn ExplorerPanel(
-    explorer_width: f64,
+    sidebar_width: f64,
     open_tabs: Signal<Vec<IlTab>>,
     active_tab_id: Signal<Option<String>>,
     highlighted_il_offset: Signal<Option<i64>>,
@@ -71,10 +71,12 @@ pub fn ExplorerPanel(
         .and_then(|id| assemblies.iter().find(|asm| asm.id == *id))
         .cloned();
 
+    let assemblies_count = assemblies.len();
+
     rsx! {
         div {
             style: format!(
-                "width: {explorer_width:.0}px; flex-shrink: 0; display: flex; \
+                "width: {sidebar_width:.0}px; flex-shrink: 0; display: flex; \
                  flex-direction: column; background: {C_BG_BASE};"
             ),
 
@@ -83,12 +85,121 @@ pub fn ExplorerPanel(
                 span { "Explorer" }
                 span {
                     class: "badge",
-                    "{methods_count} / {class_count} cls / {namespace_count} ns"
+                    "{assemblies_count} asm / {class_count} cls / {namespace_count} ns"
                 }
             }
 
             div {
-                style: "flex: 1; overflow-y: auto; padding: 8px 0;",
+                style: "padding: 10px 8px 8px; border-bottom: 1px solid rgba(255,255,255,0.05);",
+
+                div {
+                    style: "display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px;",
+                    span {
+                        style: format!("font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: {C_TEXT_MUTED}; text-transform: uppercase;"),
+                        "Assemblies"
+                    }
+                    span {
+                        class: "badge",
+                        "{assemblies_count}"
+                    }
+                }
+
+                if assemblies.is_empty() {
+                    div {
+                        class: "empty-state",
+                        style: "padding: 20px 14px;",
+                        p { "Open a .NET assembly to begin analysis" }
+                    }
+                } else {
+                    div {
+                        style: "display: flex; flex-direction: column; gap: 6px; max-height: 180px; overflow-y: auto; padding-right: 2px;",
+                        for asm in assemblies.iter() {
+                            {
+                                let asm_id = asm.id.clone();
+                                let asm_id_select = asm_id.clone();
+                                let asm_id_close = asm_id.clone();
+                                let is_selected = selected_id.as_ref() == Some(&asm_id);
+                                let item_class = if is_selected { "asm-item selected" } else { "asm-item" };
+                                rsx! {
+                                    button {
+                                        key: "assembly-list-{asm.id}",
+                                        class: "{item_class}",
+                                        style: "margin: 0; width: 100%; text-align: left;",
+                                        onclick: move |_| {
+                                            state.select_assembly(asm_id_select.clone());
+                                            open_tabs.write().clear();
+                                            active_tab_id.set(None);
+                                            highlighted_il_offset.set(None);
+                                        },
+
+                                        div {
+                                            style: "display: flex; align-items: center; justify-content: space-between; gap: 6px;",
+
+                                            div {
+                                                style: "display: flex; align-items: center; gap: 6px; min-width: 0;",
+                                                div {
+                                                    style: format!(
+                                                        "width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: {};",
+                                                        if is_selected { C_ACCENT_GREEN } else { C_TEXT_MUTED }
+                                                    )
+                                                }
+                                                span {
+                                                    style: format!(
+                                                        "font-size: 12px; font-weight: 600; color: {}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;",
+                                                        if is_selected { C_TEXT_PRIMARY } else { C_TEXT_SECONDARY }
+                                                    ),
+                                                    "{asm.name}"
+                                                }
+                                            }
+
+                                            button {
+                                                style: format!(
+                                                    "flex-shrink: 0; width: 18px; height: 18px; border-radius: 4px; border: none; background: transparent; color: {C_TEXT_MUTED}; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 120ms; padding: 0;"
+                                                ),
+                                                onclick: move |evt| {
+                                                    evt.stop_propagation();
+                                                    state.close_assembly(asm_id_close.clone());
+                                                    open_tabs.write().clear();
+                                                    active_tab_id.set(None);
+                                                    highlighted_il_offset.set(None);
+                                                },
+                                                svg {
+                                                    width: "10", height: "10", view_box: "0 0 24 24",
+                                                    fill: "none", stroke: "currentColor", stroke_width: "2.5",
+                                                    line { x1: "18", y1: "6", x2: "6", y2: "18" }
+                                                    line { x1: "6", y1: "6", x2: "18", y2: "18" }
+                                                }
+                                            }
+                                        }
+
+                                        div {
+                                            style: format!(
+                                                "font-size: 10px; color: {C_TEXT_MUTED}; margin-top: 4px; font-family: {FONT_MONO}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                                            ),
+                                            "{asm.path}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            div {
+                style: "flex: 1; overflow-y: auto; padding: 8px 0 10px;",
+
+                div {
+                    style: "display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px 8px;",
+                    span {
+                        style: format!("font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: {C_TEXT_MUTED}; text-transform: uppercase;"),
+                        "Contents"
+                    }
+                    span {
+                        style: format!("font-size: 10px; color: {C_TEXT_MUTED};"),
+                        "{methods_count} methods"
+                    }
+                }
 
                 if methods.is_empty() {
                     div {

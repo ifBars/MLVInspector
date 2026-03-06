@@ -17,5 +17,5 @@ Thumbs.db
 .agent
 .agents
 .claude
-AGENTS.md
+#AGENTS.md
 skills-lock.json

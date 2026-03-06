@@ -4,9 +4,9 @@ use dioxus_desktop::tao::event::{Event, WindowEvent};
 use dioxus_desktop::use_wry_event_handler;
 
 use crate::components::{
-    clamp_panel_width, extract_findings, global_css, run_analysis, ActiveResize, AssembliesPanel,
-    ExplorerPanel, FindingsPanel, IlTab, IlViewPanel, ResizeTarget, StatusBar, TitleBar,
-    C_ACCENT_BLUE, C_BG_BASE, C_TEXT_PRIMARY, FONT_SANS,
+    clamp_panel_width, extract_findings, global_css, run_analysis, ActiveResize, ExplorerPanel,
+    FindingsPanel, IlTab, IlViewPanel, ResizeTarget, StatusBar, TitleBar, C_ACCENT_BLUE, C_BG_BASE,
+    C_TEXT_PRIMARY, FONT_SANS,
 };
 use crate::state::AppState;
 
@@ -19,9 +19,9 @@ pub fn App() -> Element {
     // Shared cross-panel signals
     let mut open_tabs = use_signal(Vec::<IlTab>::new);
     let mut active_tab_id = use_signal(|| None::<String>);
-    let mut selected_finding = use_signal(|| None::<usize>);
+    let selected_finding = use_signal(|| None::<usize>);
     let mut last_error = use_signal(String::new);
-    let mut show_scan_panel = use_signal(|| true);
+    let show_scan_panel = use_signal(|| true);
     let mut highlighted_il_offset = use_signal(|| None::<i64>);
 
     // Drag-and-drop state (App-local)
@@ -29,8 +29,7 @@ pub fn App() -> Element {
     let mut is_dragging_over = use_signal(|| false);
 
     // Panel resize state (App-local)
-    let mut assemblies_width = use_signal(|| 220.0f64);
-    let mut explorer_width = use_signal(|| 260.0f64);
+    let mut explorer_width = use_signal(|| 320.0f64);
     let mut findings_width = use_signal(|| 300.0f64);
     let mut active_resize = use_signal(|| None::<ActiveResize>);
 
@@ -114,13 +113,6 @@ pub fn App() -> Element {
     };
 
     let is_resizing = active_resize.read().is_some();
-    let is_resizing_assemblies = matches!(
-        *active_resize.read(),
-        Some(ActiveResize {
-            target: ResizeTarget::Assemblies,
-            ..
-        })
-    );
     let is_resizing_explorer = matches!(
         *active_resize.read(),
         Some(ActiveResize {
@@ -233,7 +225,7 @@ pub fn App() -> Element {
                 highlighted_il_offset,
             }
 
-            // ── Four-panel workspace ───────────────────────────────────────────
+            // ── Three-panel workspace ──────────────────────────────────────────
             div {
                 style: format!(
                     "flex: 1; display: flex; min-height: 0; overflow: hidden; \
@@ -248,14 +240,11 @@ pub fn App() -> Element {
                         let cursor_x = evt.data().coordinates().client().x;
                         let delta = cursor_x - active.start_x;
                         let next_width = match active.target {
-                            ResizeTarget::Assemblies | ResizeTarget::Explorer => {
-                                active.start_width + delta
-                            }
+                            ResizeTarget::Explorer => active.start_width + delta,
                             ResizeTarget::Findings => active.start_width - delta,
                         };
                         let clamped = clamp_panel_width(active.target, next_width);
                         match active.target {
-                            ResizeTarget::Assemblies => assemblies_width.set(clamped),
                             ResizeTarget::Explorer => explorer_width.set(clamped),
                             ResizeTarget::Findings => findings_width.set(clamped),
                         }
@@ -264,34 +253,9 @@ pub fn App() -> Element {
                 onmouseup: move |_| active_resize.set(None),
                 onmouseleave: move |_| active_resize.set(None),
 
-                // Panel 1: Assemblies
-                AssembliesPanel {
-                    assemblies_width: assemblies_width(),
-                    open_tabs,
-                    active_tab_id,
-                    highlighted_il_offset,
-                }
-
-                // Resize handle: assemblies ↔ explorer
-                div {
-                    class: if is_resizing_assemblies {
-                        "resize-handle active"
-                    } else {
-                        "resize-handle"
-                    },
-                    onmousedown: move |evt| {
-                        evt.prevent_default();
-                        active_resize.set(Some(ActiveResize {
-                            target: ResizeTarget::Assemblies,
-                            start_x: evt.data().coordinates().client().x,
-                            start_width: assemblies_width(),
-                        }));
-                    },
-                }
-
-                // Panel 2: Explorer
+                // Panel 1: Explorer
                 ExplorerPanel {
-                    explorer_width: explorer_width(),
+                    sidebar_width: explorer_width(),
                     open_tabs,
                     active_tab_id,
                     highlighted_il_offset,
@@ -314,14 +278,14 @@ pub fn App() -> Element {
                     },
                 }
 
-                // Panel 3: IL / C# view
+                // Panel 2: IL / C# view
                 IlViewPanel {
                     open_tabs,
                     active_tab_id,
                     highlighted_il_offset,
                 }
 
-                // Panel 4: Findings (optional)
+                // Panel 3: Findings (optional)
                 if show_scan_panel() {
                     // Resize handle: IL view ↔ findings
                     div {
