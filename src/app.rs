@@ -4,9 +4,9 @@ use dioxus_desktop::tao::event::{Event, WindowEvent};
 use dioxus_desktop::use_wry_event_handler;
 
 use crate::components::{
-    clamp_panel_width, extract_findings, global_css, run_analysis, ActiveResize, ExplorerPanel,
-    FindingsPanel, IlTab, IlViewPanel, ResizeTarget, StatusBar, TitleBar, C_ACCENT_BLUE, C_BG_BASE,
-    C_TEXT_PRIMARY, FONT_SANS,
+    clamp_panel_width, extract_findings, global_css, run_analysis, ActiveResize, CommandPalette,
+    ExplorerPanel, FindingsPanel, IlTab, IlViewPanel, ResizeTarget, StatusBar, TitleBar,
+    C_ACCENT_BLUE, C_BG_BASE, C_TEXT_PRIMARY, FONT_SANS,
 };
 use crate::state::AppState;
 
@@ -21,6 +21,7 @@ pub fn App() -> Element {
     let mut active_tab_id = use_signal(|| None::<String>);
     let selected_finding = use_signal(|| None::<usize>);
     let mut last_error = use_signal(String::new);
+    let show_command_palette = use_signal(|| false);
     let show_scan_panel = use_signal(|| true);
     let mut highlighted_il_offset = use_signal(|| None::<i64>);
 
@@ -218,6 +219,16 @@ pub fn App() -> Element {
 
             // ── Title bar ──────────────────────────────────────────────────────
             TitleBar {
+                show_command_palette,
+                show_scan_panel,
+                last_error,
+                open_tabs,
+                active_tab_id,
+                highlighted_il_offset,
+            }
+
+            CommandPalette {
+                is_open: show_command_palette,
                 show_scan_panel,
                 last_error,
                 open_tabs,

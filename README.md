@@ -31,10 +31,12 @@ It is being developed specifically for malware reverse engineering and malware a
 ## Current Feature Set
 
 - Open `.dll` and `.exe` assemblies from the toolbar or drag and drop
+- Open a toolbar search palette to jump across assemblies, types, methods, and actions
 - Explore namespaces, types, methods, and IL
 - View decompiled C# alongside IL output
 - Run explore + scan analysis through `ILInspector.Worker`
 - Review findings with rule metadata and severity information
+- Export the selected assembly into a decompiled C# project layout with namespace folders, per-type files, a generated `.csproj`, and analysis JSON
 
 ## Positioning
 

@@ -12,7 +12,9 @@
 /// - `il_view_panel`    — center panel: IL instruction viewer + C# decompiler
 /// - `findings_panel`   — right panel: scan findings list
 pub mod analysis;
+pub mod command_palette;
 pub mod explorer_panel;
+pub mod explorer_tools;
 pub mod findings_panel;
 pub mod helpers;
 pub mod il_view_panel;
@@ -23,6 +25,7 @@ pub mod title_bar;
 pub mod view_models;
 
 pub use analysis::run_analysis;
+pub use command_palette::CommandPalette;
 pub use explorer_panel::ExplorerPanel;
 pub use findings_panel::FindingsPanel;
 pub use helpers::extract_findings;

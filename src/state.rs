@@ -21,6 +21,7 @@ pub struct AppState {
     pub active_mode: Signal<ActiveMode>,
     pub analysis_entries: Signal<HashMap<String, AnalysisEntry>>,
     pub rules: Signal<Vec<RuleInfo>>,
+    pub last_export_path: Signal<Option<String>>,
     /// The long-lived worker client — shared across all async tasks.
     pub worker: Signal<WorkerClient>,
     pub is_running: Signal<bool>,
@@ -35,6 +36,7 @@ impl Default for AppState {
             active_mode: Signal::new(ActiveMode::Scan),
             analysis_entries: Signal::new(HashMap::new()),
             rules: Signal::new(Vec::new()),
+            last_export_path: Signal::new(None),
             worker: Signal::new(WorkerClient::new(WorkerConfig::default())),
             is_running: Signal::new(false),
             dark_mode: Signal::new(true),
@@ -118,11 +120,16 @@ impl AppState {
         self.assemblies.write().clear();
         self.selected_id.set(None);
         self.analysis_entries.write().clear();
+        self.last_export_path.set(None);
     }
 
     /// Set rules loaded from the worker.
     pub fn set_rules(mut self, rules: Vec<RuleInfo>) {
         tracing::info!("Setting {} rules", rules.len());
         self.rules.set(rules);
+    }
+
+    pub fn set_last_export_path(mut self, path: Option<String>) {
+        self.last_export_path.set(path);
     }
 }

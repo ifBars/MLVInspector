@@ -103,6 +103,106 @@ pub fn global_css() -> String {
             background: rgba(245,245,245,0.08);
             color: #f5f5f5;
         }}
+        .tool-btn:disabled,
+        .tool-btn.disabled {{
+            opacity: 0.45;
+            cursor: not-allowed;
+        }}
+        .tool-btn:disabled:hover,
+        .tool-btn.disabled:hover {{
+            border-color: transparent;
+            background: transparent;
+            color: #b4b8c0;
+        }}
+
+        .command-palette-overlay {{
+            position: absolute;
+            inset: 0;
+            z-index: 1200;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+            padding: 72px 20px 20px;
+            background: rgba(10, 11, 13, 0.58);
+            backdrop-filter: blur(6px);
+        }}
+        .command-palette {{
+            width: min(760px, 100%);
+            max-height: min(78vh, 760px);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            border: 1px solid #3b4048;
+            border-radius: 16px;
+            background: linear-gradient(180deg, #1a1c20 0%, #131518 100%);
+            box-shadow: 0 28px 80px rgba(0, 0, 0, 0.45);
+        }}
+        .command-palette-search {{
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 14px 16px;
+            border-bottom: 1px solid #2d3138;
+            background: rgba(255,255,255,0.02);
+        }}
+        .command-palette-close {{
+            border: 1px solid #2d3138;
+            border-radius: 6px;
+            background: #101113;
+            color: #7d828d;
+            padding: 3px 7px;
+            font-size: 10px;
+            font-family: {font_mono};
+            cursor: pointer;
+        }}
+        .command-palette-results {{
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            display: grid;
+            gap: 10px;
+        }}
+        .command-palette-group {{
+            display: grid;
+            gap: 6px;
+        }}
+        .command-palette-group-label {{
+            padding: 4px 8px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #7d828d;
+        }}
+        .command-palette-item {{
+            width: 100%;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border: 1px solid #2d3138;
+            border-radius: 10px;
+            background: #17191c;
+            color: #f5f5f5;
+            text-align: left;
+            cursor: pointer;
+            transition: all 120ms ease;
+        }}
+        .command-palette-item:hover {{
+            border-color: #5a606a;
+            background: #1e2126;
+        }}
+        .command-palette-footer {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            padding: 10px 14px 12px;
+            border-top: 1px solid #2d3138;
+            color: #7d828d;
+            font-size: 10px;
+            font-family: {font_mono};
+        }}
 
         .il-tabs {{
             display: flex;

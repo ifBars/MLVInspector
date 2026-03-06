@@ -2,6 +2,7 @@
 use dioxus::prelude::*;
 use dioxus_desktop::window;
 
+use crate::services::export_project::{export_project_bundle, open_in_file_explorer};
 use crate::state::AppState;
 
 use super::analysis::run_analysis;
@@ -12,6 +13,7 @@ const APP_ICON: Asset = asset!("/assets/icon.png");
 
 #[component]
 pub fn TitleBar(
+    show_command_palette: Signal<bool>,
     show_scan_panel: Signal<bool>,
     last_error: Signal<String>,
     open_tabs: Signal<Vec<IlTab>>,
@@ -26,6 +28,17 @@ pub fn TitleBar(
     let desktop_window_min = desktop_window.clone();
     let desktop_window_full = desktop_window.clone();
     let desktop_window_close = desktop_window.clone();
+    let selected_assembly = state.selected_id.read().clone().and_then(|selected_id| {
+        state
+            .assemblies
+            .read()
+            .iter()
+            .find(|assembly| assembly.id == selected_id)
+            .cloned()
+    });
+    let can_export = selected_assembly.is_some();
+    let last_export_path = state.last_export_path.read().clone();
+    let can_open_export = last_export_path.is_some();
 
     rsx! {
         div {
@@ -76,6 +89,19 @@ pub fn TitleBar(
                     class: "no-drag toolbar",
 
                     // Toggle findings panel
+                    button {
+                        class: if show_command_palette() { "tool-btn active" } else { "tool-btn" },
+                        title: "Search Tools",
+                        "aria-label": "Search Tools",
+                        onclick: move |_| show_command_palette.set(true),
+                        svg {
+                            width: "13", height: "13", view_box: "0 0 24 24", fill: "none",
+                            stroke: "currentColor", stroke_width: "2",
+                            circle { cx: "11", cy: "11", r: "7" }
+                            line { x1: "20", y1: "20", x2: "16.65", y2: "16.65" }
+                        }
+                    }
+
                     button {
                         class: if show_scan_panel() { "tool-btn active" } else { "tool-btn" },
                         title: if show_scan_panel() { "Hide Findings" } else { "Show Findings" },
@@ -132,6 +158,72 @@ pub fn TitleBar(
                             path { d: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" }
                             polyline { points: "17 8 12 3 7 8" }
                             line { x1: "12", y1: "3", x2: "12", y2: "15" }
+                        }
+                    }
+
+                    button {
+                        class: if can_export { "tool-btn" } else { "tool-btn disabled" },
+                        title: "Export Project",
+                        "aria-label": "Export Project",
+                        disabled: !can_export,
+                        onclick: move |_| {
+                            let Some(assembly) = selected_assembly.clone() else {
+                                last_error.set("Select an assembly before exporting".to_string());
+                                return;
+                            };
+
+                            let Some(folder) = rfd::FileDialog::new()
+                                .set_title("Export Project Bundle")
+                                .pick_folder()
+                            else {
+                                return;
+                            };
+
+                            let worker = state.worker.read().clone();
+                            let analysis = state
+                                .get_analysis_entry(&format!("{}::explore", assembly.id))
+                                .and_then(|entry| entry.result);
+
+                            spawn(async move {
+                                match export_project_bundle(worker, assembly, analysis, folder).await {
+                                    Ok(path) => {
+                                        state.set_last_export_path(Some(path.display().to_string()));
+                                        last_error.set(String::new());
+                                        tracing::info!(path = %path.display(), "exported project bundle");
+                                    }
+                                    Err(err) => last_error.set(err.to_string()),
+                                }
+                            });
+                        },
+                        svg {
+                            width: "13", height: "13", view_box: "0 0 24 24", fill: "none",
+                            stroke: "currentColor", stroke_width: "2",
+                            path { d: "M12 3v12" }
+                            polyline { points: "8 11 12 15 16 11" }
+                            path { d: "M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" }
+                        }
+                    }
+
+                    button {
+                        class: if can_open_export { "tool-btn" } else { "tool-btn disabled" },
+                        title: "Open Export Folder",
+                        "aria-label": "Open Export Folder",
+                        disabled: !can_open_export,
+                        onclick: move |_| {
+                            let Some(path) = last_export_path.clone() else {
+                                last_error.set("No export folder is available yet".to_string());
+                                return;
+                            };
+
+                            if let Err(err) = open_in_file_explorer(&path) {
+                                last_error.set(err.to_string());
+                            }
+                        },
+                        svg {
+                            width: "13", height: "13", view_box: "0 0 24 24", fill: "none",
+                            stroke: "currentColor", stroke_width: "2",
+                            path { d: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" }
+                            polyline { points: "12 11 15 14 21 8" }
                         }
                     }
                 }

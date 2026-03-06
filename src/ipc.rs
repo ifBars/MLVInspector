@@ -68,7 +68,7 @@ pub struct WorkerResponse {
 
 // ─── Payload types ────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExplorePayload {
     pub assembly_path: String,
@@ -77,14 +77,14 @@ pub struct ExplorePayload {
     pub types: Vec<TypeEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TypeEntry {
     pub type_name: String,
     pub methods: Vec<MethodEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MethodEntry {
     pub type_name: String,
@@ -95,7 +95,7 @@ pub struct MethodEntry {
     pub p_invoke: Option<PInvokeEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ILInstructionEntry {
     pub offset: i32,
@@ -103,7 +103,7 @@ pub struct ILInstructionEntry {
     pub operand: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PInvokeEntry {
     pub dll_name: String,
@@ -111,7 +111,7 @@ pub struct PInvokeEntry {
     pub is_p_invoke: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanPayload {
     pub assembly_path: String,
@@ -124,7 +124,7 @@ pub struct ScanPayload {
     pub data_flows: Option<Vec<DataFlowChainEntry>>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanMetaEntry {
     pub scanner_version: String,
@@ -133,7 +133,7 @@ pub struct ScanMetaEntry {
     pub platform: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanInputEntry {
     pub file_name: String,
@@ -141,7 +141,7 @@ pub struct ScanInputEntry {
     pub sha256_hash: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanSummaryEntry {
     pub total_findings: i32,
@@ -149,7 +149,7 @@ pub struct ScanSummaryEntry {
     pub triggered_rules: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FindingEntry {
     pub id: Option<String>,
@@ -162,7 +162,7 @@ pub struct FindingEntry {
     pub data_flow_chain: Option<DataFlowChainEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CallChainEntry {
     pub id: String,
@@ -172,7 +172,7 @@ pub struct CallChainEntry {
     pub nodes: Vec<CallChainNodeEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CallChainNodeEntry {
     pub node_type: String,
@@ -181,7 +181,7 @@ pub struct CallChainNodeEntry {
     pub code_snippet: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataFlowChainEntry {
     pub id: String,
@@ -196,7 +196,7 @@ pub struct DataFlowChainEntry {
     pub nodes: Vec<DataFlowNodeEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DataFlowNodeEntry {
     pub node_type: String,
@@ -210,7 +210,7 @@ pub struct DataFlowNodeEntry {
     pub code_snippet: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RuleEntry {
     pub rule_id: String,
@@ -218,7 +218,7 @@ pub struct RuleEntry {
     pub severity: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DecompilePayload {
     pub assembly_path: String,
