@@ -1,0 +1,22 @@
+[application]
+name = "MLVInspector"
+
+[bundle]
+identifier = "com.ghost.mlvinspector"
+icon = ["assets/icon.png"]
+category = "DeveloperTool"
+
+[web.app]
+title = "MLVInspector"
+
+[web.watcher]
+reload_html = true
+watch_path = ["src", "assets"]
+
+[web.resource]
+style = ["assets/tailwind.css"]
+script = []
+
+[web.resource.dev]
+style = ["assets/tailwind.css"]
+script = []

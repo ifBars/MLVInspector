@@ -1,0 +1,24 @@
+[package]
+name = "mlvinspector-dioxus"
+version = "0.1.0"
+edition = "2021"
+authors = ["ghost"]
+description = "MLVInspector - .NET assembly analysis and MLVScan rule evaluation GUI (Dioxus edition)"
+
+[dependencies]
+dioxus = { version = "0.7", features = ["desktop"] }
+dioxus-desktop = { version = "0.7" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rfd = "0.15"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
