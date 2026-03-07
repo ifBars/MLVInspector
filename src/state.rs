@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use dioxus::prelude::*;
 
 use crate::services::worker_client::{WorkerClient, WorkerConfig};
-use crate::types::{ActiveMode, AnalysisEntry, AssemblyId, OpenAssembly, RuleInfo};
+use crate::types::{AnalysisEntry, AssemblyId, OpenAssembly, RuleInfo};
 
 /// Global application state.
 ///
@@ -18,14 +18,12 @@ use crate::types::{ActiveMode, AnalysisEntry, AssemblyId, OpenAssembly, RuleInfo
 pub struct AppState {
     pub assemblies: Signal<Vec<OpenAssembly>>,
     pub selected_id: Signal<Option<AssemblyId>>,
-    pub active_mode: Signal<ActiveMode>,
     pub analysis_entries: Signal<HashMap<String, AnalysisEntry>>,
     pub rules: Signal<Vec<RuleInfo>>,
     pub last_export_path: Signal<Option<String>>,
     /// The long-lived worker client — shared across all async tasks.
     pub worker: Signal<WorkerClient>,
     pub is_running: Signal<bool>,
-    pub dark_mode: Signal<bool>,
 }
 
 impl Default for AppState {
@@ -33,13 +31,11 @@ impl Default for AppState {
         Self {
             assemblies: Signal::new(Vec::new()),
             selected_id: Signal::new(None),
-            active_mode: Signal::new(ActiveMode::Scan),
             analysis_entries: Signal::new(HashMap::new()),
             rules: Signal::new(Vec::new()),
             last_export_path: Signal::new(None),
             worker: Signal::new(WorkerClient::new(WorkerConfig::default())),
             is_running: Signal::new(false),
-            dark_mode: Signal::new(true),
         }
     }
 }
@@ -98,11 +94,6 @@ impl AppState {
         if self.assemblies.read().iter().any(|a| a.id == id) {
             self.selected_id.set(Some(id));
         }
-    }
-
-    /// Set the active analysis mode.
-    pub fn set_active_mode(mut self, mode: ActiveMode) {
-        self.active_mode.set(mode);
     }
 
     /// Store an analysis result.

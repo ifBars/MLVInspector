@@ -226,21 +226,4 @@ impl WorkerClient {
         self.call("decompile", params).await
     }
 
-    /// Ask the worker to evict a cached assembly (e.g. after a file is modified).
-    pub async fn evict(&self, assembly_path: String) -> Result<(), AppError> {
-        let _: serde_json::Value = self.call("evict", assembly_path).await?;
-        Ok(())
-    }
-
-    /// Gracefully shut down the worker process.
-    pub async fn shutdown(&self) {
-        let mut guard = self.inner.lock().await;
-        if let Some(state) = guard.state.as_mut() {
-            let req = serde_json::json!({ "id": 0u64, "method": "shutdown", "params": {} });
-            let mut line = req.to_string();
-            line.push('\n');
-            let _ = state.stdin.write_all(line.as_bytes()).await;
-        }
-        guard.state = None;
-    }
 }

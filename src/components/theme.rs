@@ -1,4 +1,4 @@
-/// Design tokens — single source of truth for all colours, fonts, and spacing.
+//! Design tokens - single source of truth for all colours, fonts, and spacing.
 
 pub const C_BG_BASE: &str = "#101113";
 pub const C_BG_SURFACE: &str = "#17191c";
