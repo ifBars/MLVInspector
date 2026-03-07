@@ -27,6 +27,12 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
       - name: Cache cargo registry
         uses: actions/cache@v4
         with:
@@ -65,21 +71,3 @@ jobs:
           name: MLVInspector-windows
           path: artifacts/
           retention-days: 7
-
-  lint:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Run clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
