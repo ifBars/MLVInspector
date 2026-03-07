@@ -1,5 +1,7 @@
+using System.Text.RegularExpressions;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.CSharp;
+using ICSharpCode.Decompiler.Metadata;
 using ICSharpCode.Decompiler.TypeSystem;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
@@ -26,7 +28,14 @@ internal sealed class Dispatcher
         {
             foreach (var type in EnumerateTypes(module))
             {
-                if (type.Name == "<Module>" || !MatchesTypeFilter(type, p.TypeFilter, p.NamespaceFilter))
+                // Skip the synthetic <Module> pseudo-type and all compiler-generated
+                // types (async state machines, iterators, closures, lambdas).
+                // These are surfaced as reconstructed async/yield code when their
+                // declaring types are decompiled, so listing them separately adds
+                // noise and confusion (e.g. <DownloadAsync>d__5.MoveNext).
+                if (type.Name == "<Module>" ||
+                    IsCompilerGeneratedType(type) ||
+                    !MatchesTypeFilter(type, p.TypeFilter, p.NamespaceFilter))
                 {
                     continue;
                 }
@@ -175,12 +184,7 @@ internal sealed class Dispatcher
 
     public DecompilePayload Decompile(DecompileParams p)
     {
-        var settings = new DecompilerSettings
-        {
-            ThrowOnAssemblyResolveErrors = false,
-        };
-
-        var decompiler = new CSharpDecompiler(p.Assembly, settings);
+        var decompiler = CreateDecompiler(p.Assembly);
         var requestedTypeName = NormalizeRequestedName(p.TypeName);
         var requestedMethodName = NormalizeRequestedName(p.MethodName);
         string source;
@@ -194,7 +198,16 @@ internal sealed class Dispatcher
                 var reflectionName = requestedTypeName.Replace('/', '+');
                 var fullName = new FullTypeName(reflectionName);
 
-                if (requestedMethodName != null)
+                // If the requested type is a compiler-generated type (async state
+                // machine, iterator, closure), redirect to the logical method in
+                // the parent type so the user sees clean async/yield code instead
+                // of raw MoveNext IL.
+                if (IsCompilerGeneratedTypeName(GetSimpleTypeName(requestedTypeName)))
+                {
+                    source = DecompileCompilerGeneratedType(p.Assembly, requestedTypeName, decompiler)
+                        ?? decompiler.DecompileTypeAsString(fullName);
+                }
+                else if (requestedMethodName != null)
                 {
                     // FindType handles both top-level and nested types when
                     // given a reflection-style name (dots for namespaces, + for
@@ -245,6 +258,157 @@ internal sealed class Dispatcher
             MethodName = requestedMethodName,
             CsharpSource = source,
         };
+    }
+
+    /// <summary>
+    /// Builds a <see cref="CSharpDecompiler"/> that uses a
+    /// <see cref="UniversalAssemblyResolver"/> seeded with the assembly's own
+    /// directory. This lets the decompiler find sibling DLLs, framework
+    /// reference assemblies, and NuGet packages automatically instead of
+    /// failing on unresolved type references.
+    /// </summary>
+    private static CSharpDecompiler CreateDecompiler(string assemblyPath)
+    {
+        var settings = new DecompilerSettings
+        {
+            ThrowOnAssemblyResolveErrors = false,
+            // Never strip code — for security analysis we want to see everything.
+            RemoveDeadCode = false,
+            RemoveDeadStores = false,
+        };
+
+        var resolver = new UniversalAssemblyResolver(
+            assemblyPath,
+            throwOnError: false,
+            targetFramework: null);
+
+        // Search the assembly's own directory first (catches sibling DLLs,
+        // plugins shipped alongside the target, etc.).
+        var dir = Path.GetDirectoryName(assemblyPath);
+        if (!string.IsNullOrEmpty(dir))
+            resolver.AddSearchDirectory(dir);
+
+        return new CSharpDecompiler(assemblyPath, resolver, settings);
+    }
+
+    // Matches compiler-generated type simple names: <MethodName>d__0 (async),
+    // <MethodName>c__Iterator0 (iterator), <MethodName>b__0 (lambda),
+    // <MethodName>c__DisplayClass0 (closure), etc.
+    private static readonly Regex s_compilerGeneratedPattern =
+        new(@"^<[^>]*>", RegexOptions.Compiled);
+
+    /// <summary>Returns true when the simple type name (not namespace-qualified)
+    /// looks like a compiler-generated type.</summary>
+    internal static bool IsCompilerGeneratedTypeName(string simpleName) =>
+        s_compilerGeneratedPattern.IsMatch(simpleName);
+
+    /// <summary>Returns true when the type has a compiler-generated name AND
+    /// carries <c>[CompilerGenerated]</c>, making it definitively synthetic.</summary>
+    internal static bool IsCompilerGeneratedType(TypeDefinition type) =>
+        IsCompilerGeneratedTypeName(type.Name) &&
+        type.CustomAttributes.Any(a => a.AttributeType.Name == "CompilerGeneratedAttribute");
+
+    /// <summary>Extracts the simple (unqualified) type name from a Mono.Cecil
+    /// full name, which uses '/' for nested types and '.' for namespaces.</summary>
+    internal static string GetSimpleTypeName(string monoCecilFullName)
+    {
+        var slashIdx = monoCecilFullName.LastIndexOf('/');
+        if (slashIdx >= 0)
+            return monoCecilFullName[(slashIdx + 1)..];
+        var dotIdx = monoCecilFullName.LastIndexOf('.');
+        return dotIdx >= 0 ? monoCecilFullName[(dotIdx + 1)..] : monoCecilFullName;
+    }
+
+    /// <summary>
+    /// Finds the user-written method that owns a compiler-generated state machine
+    /// type by inspecting <c>[AsyncStateMachine]</c> and
+    /// <c>[IteratorStateMachine]</c> attributes on the declaring type's methods.
+    /// </summary>
+    internal static MethodDefinition? FindStateMachineOwner(TypeDefinition stateMachineType)
+    {
+        var declaringType = stateMachineType.DeclaringType;
+        if (declaringType == null)
+            return null;
+
+        foreach (var method in declaringType.Methods)
+        {
+            foreach (var attr in method.CustomAttributes)
+            {
+                var name = attr.AttributeType.Name;
+                if ((name == "AsyncStateMachineAttribute" || name == "IteratorStateMachineAttribute") &&
+                    attr.ConstructorArguments.Count == 1 &&
+                    attr.ConstructorArguments[0].Value is TypeReference tr &&
+                    tr.FullName == stateMachineType.FullName)
+                {
+                    return method;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Decompiles a compiler-generated type by redirecting to its logical
+    /// source. For state machines this produces clean async/await or yield
+    /// return code instead of the raw <c>MoveNext</c> implementation.
+    /// Returns <c>null</c> if the owner cannot be determined.
+    /// </summary>
+    private string? DecompileCompilerGeneratedType(
+        string assemblyPath,
+        string monoCecilTypeName,
+        CSharpDecompiler decompiler)
+    {
+        var cecilAssembly = _cache.Load(assemblyPath);
+
+        TypeDefinition? smType = null;
+        foreach (var module in cecilAssembly.Modules)
+        {
+            foreach (var type in EnumerateTypes(module))
+            {
+                if (type.FullName == monoCecilTypeName)
+                {
+                    smType = type;
+                    break;
+                }
+            }
+            if (smType != null) break;
+        }
+
+        if (smType == null)
+            return null;
+
+        // Try the explicit attribute route first — most reliable.
+        var ownerMethod = FindStateMachineOwner(smType);
+        if (ownerMethod != null)
+        {
+            var ownerReflName = ownerMethod.DeclaringType.FullName.Replace('/', '+');
+            var ownerFullName = new FullTypeName(ownerReflName);
+            var icTypeDef = decompiler.TypeSystem.FindType(ownerFullName).GetDefinition();
+
+            if (icTypeDef != null)
+            {
+                // Match by name; for overloads we take the first match which is
+                // what the user most likely clicked.
+                var icMethod = icTypeDef.Methods.FirstOrDefault(m => m.Name == ownerMethod.Name);
+                if (icMethod != null)
+                    return decompiler.DecompileAsString(icMethod.MetadataToken);
+            }
+
+            // Fell through — decompile the whole parent type (still better than
+            // showing raw MoveNext).
+            return decompiler.DecompileTypeAsString(ownerFullName);
+        }
+
+        // No attribute found — fall back to decompiling the declaring type.
+        var declaringType = smType.DeclaringType;
+        if (declaringType != null)
+        {
+            var reflName = declaringType.FullName.Replace('/', '+');
+            return decompiler.DecompileTypeAsString(new FullTypeName(reflName));
+        }
+
+        return null;
     }
 
     internal static string BuildTypeWiseReconstruction(
@@ -440,7 +604,11 @@ internal sealed class Dispatcher
         {
             foreach (var type in EnumerateTypes(module))
             {
-                if (type.Name == "<Module>")
+                // Compiler-generated types (<MethodName>d__N, closures, etc.) are
+                // already inlined into their parent type's decompiled output as
+                // proper async/await or yield return code. Decompiling them again
+                // separately produces duplicate, confusing raw-MoveNext blocks.
+                if (type.Name == "<Module>" || IsCompilerGeneratedType(type))
                 {
                     continue;
                 }
