@@ -225,5 +225,4 @@ impl WorkerClient {
     pub async fn decompile(&self, params: DecompileParams) -> Result<DecompilePayload, AppError> {
         self.call("decompile", params).await
     }
-
 }
