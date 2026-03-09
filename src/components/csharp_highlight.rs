@@ -177,7 +177,7 @@ pub fn highlight_csharp(source: &str) -> Vec<Vec<HighlightedSegment>> {
             && !chars[index].is_ascii_digit()
             && string_end(&chars, index).is_none()
             && !(chars[index] == '/' && matches!(chars.get(index + 1), Some('/') | Some('*')))
-            && !(chars[index] == '[')
+            && chars[index] != '['
         {
             index += 1;
         }
@@ -187,7 +187,7 @@ pub fn highlight_csharp(source: &str) -> Vec<Vec<HighlightedSegment>> {
     lines
 }
 
-fn push_segment(lines: &mut Vec<Vec<HighlightedSegment>>, slice: &[char], kind: CSharpTokenKind) {
+fn push_segment(lines: &mut [Vec<HighlightedSegment>], slice: &[char], kind: CSharpTokenKind) {
     if slice.is_empty() {
         return;
     }

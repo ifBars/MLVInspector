@@ -5,14 +5,14 @@ use dioxus_desktop::use_wry_event_handler;
 
 use crate::components::{
     clamp_panel_width, dispatch_shortcut_binding, extract_findings, global_css, run_analysis,
-    ActiveResize, CommandContext, CommandId, CommandPalette, ExplorerPanel, FindingsPanel,
-    IlTab, IlViewPanel, OverlayKind, ResizeTarget, SettingsOverlay, StatusBar, TitleBar,
-    C_ACCENT_BLUE, C_BG_BASE, C_TEXT_PRIMARY, FONT_SANS,
+    ActiveResize, CommandContext, CommandId, CommandPalette, ExplorerPanel, FindingsPanel, IlTab,
+    IlViewPanel, OverlayKind, ResizeTarget, SettingsOverlay, StatusBar, TitleBar, C_ACCENT_BLUE,
+    C_BG_BASE, C_TEXT_PRIMARY, FONT_SANS,
 };
 use crate::services::settings::{load_shortcut_settings, save_shortcut_settings};
 use crate::shortcuts::{
-    binding_from_shortcut_event_payload, ShortcutKey, ShortcutKeyEventPayload,
-    ShortcutSettings, APP_SHORTCUT_LISTENER_SCRIPT,
+    binding_from_shortcut_event_payload, ShortcutKey, ShortcutKeyEventPayload, ShortcutSettings,
+    APP_SHORTCUT_LISTENER_SCRIPT,
 };
 use crate::state::AppState;
 
@@ -165,14 +165,14 @@ pub fn App() -> Element {
         _ => {}
     });
 
-    let _keyboard_handler = use_wry_event_handler(move |event, _| match event {
-        Event::WindowEvent {
+    let _keyboard_handler = use_wry_event_handler(move |event, _| {
+        if let Event::WindowEvent {
             event: WindowEvent::Focused(false),
             ..
-        } => {
+        } = event
+        {
             editing_command.set(None);
         }
-        _ => {}
     });
 
     // Derive findings count for status bar

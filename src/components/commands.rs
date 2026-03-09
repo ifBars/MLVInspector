@@ -201,7 +201,10 @@ pub fn dispatch_shortcut_binding(
     true
 }
 
-fn shortcut_is_allowed_in_overlay(active_overlay: Option<OverlayKind>, command_id: CommandId) -> bool {
+fn shortcut_is_allowed_in_overlay(
+    active_overlay: Option<OverlayKind>,
+    command_id: CommandId,
+) -> bool {
     !matches!(active_overlay, Some(OverlayKind::Settings)) || command_id == CommandId::CloseOverlay
 }
 
@@ -308,6 +311,16 @@ pub fn execute_command(mut context: CommandContext, command_id: CommandId) {
     }
 }
 
+fn selected_assembly(state: AppState) -> Option<crate::types::OpenAssembly> {
+    let selected_id = state.selected_id.read().clone()?;
+    state
+        .assemblies
+        .read()
+        .iter()
+        .find(|assembly| assembly.id == selected_id)
+        .cloned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -340,14 +353,4 @@ mod tests {
             CommandId::CloseOverlay
         ));
     }
-}
-
-fn selected_assembly(state: AppState) -> Option<crate::types::OpenAssembly> {
-    let selected_id = state.selected_id.read().clone()?;
-    state
-        .assemblies
-        .read()
-        .iter()
-        .find(|assembly| assembly.id == selected_id)
-        .cloned()
 }
