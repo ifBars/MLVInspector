@@ -80,11 +80,11 @@ jobs:
         run: cargo install dioxus-cli
 
       - name: Build .NET Worker
-        run: dotnet build MLVInspector.Worker/ILInspector.Worker.csproj -c Release
+        run: dotnet build MLVInspector.Worker/ILInspector.Worker.csproj -c Release -r win-x64
         shell: bash
 
       - name: Publish .NET Worker
-        run: dotnet publish MLVInspector.Worker/ILInspector.Worker.csproj -c Release -o worker-publish --no-build
+        run: dotnet publish MLVInspector.Worker/ILInspector.Worker.csproj -c Release -r win-x64 -o worker-publish --no-build
         shell: bash
 
       - name: Build Dioxus App
