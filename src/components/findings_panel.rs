@@ -3,7 +3,10 @@ use dioxus::prelude::*;
 
 use crate::state::AppState;
 
-use super::helpers::{extract_findings, method_tab_id, severity_color};
+use super::helpers::{
+    extract_findings, extract_methods, method_tab_id, parse_method_location,
+    resolve_method_reference, severity_color,
+};
 use super::theme::{
     C_ACCENT_AMBER, C_BG_ELEVATED, C_BG_SURFACE, C_BORDER, C_BORDER_ACCENT, C_TEXT_MUTED,
     C_TEXT_PRIMARY, C_TEXT_SECONDARY, FONT_MONO,
@@ -15,7 +18,6 @@ pub fn FindingsPanel(
     findings_width: f64,
     open_tabs: Signal<Vec<IlTab>>,
     active_tab_id: Signal<Option<String>>,
-    highlighted_il_offset: Signal<Option<i64>>,
     selected_finding: Signal<Option<usize>>,
 ) -> Element {
     let state = use_context::<AppState>();
@@ -28,6 +30,17 @@ pub fn FindingsPanel(
             .as_ref()
             .and_then(|e| e.result.as_ref())
             .map(extract_findings)
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let methods = if let Some(ref id) = selected_id {
+        let explore_key = format!("{id}::explore");
+        state
+            .get_analysis_entry(&explore_key)
+            .as_ref()
+            .and_then(|e| e.result.as_ref())
+            .map(extract_methods)
             .unwrap_or_default()
     } else {
         Vec::new()
@@ -91,37 +104,80 @@ pub fn FindingsPanel(
                                 } else {
                                     "finding-item"
                                 };
+                                let finding_rule_id = finding.rule_id.clone();
                                 let finding_location = finding.location.clone();
-                                let finding_offset = finding.il_offset;
+                                let navigation = finding.navigation.clone();
+                                let fallback_location = parse_method_location(&finding.location);
+                                let resolved_method = navigation
+                                    .as_ref()
+                                    .and_then(|navigation| {
+                                        resolve_method_reference(
+                                            &methods,
+                                            &navigation.primary_type_name,
+                                            &navigation.primary_method_name,
+                                        )
+                                    })
+                                    .or_else(|| {
+                                        fallback_location.as_ref().and_then(|(type_name, method_name)| {
+                                            resolve_method_reference(&methods, type_name, method_name)
+                                        })
+                                    })
+                                    .or_else(|| fallback_location.clone())
+                                    .or_else(|| {
+                                        navigation.as_ref().map(|navigation| {
+                                            (
+                                                navigation.primary_type_name.clone(),
+                                                navigation.primary_method_name.clone(),
+                                            )
+                                        })
+                                    });
                                 rsx! {
                                     button {
                                         key: "{index}-{finding.rule_id}",
                                         class: "{item_class}",
                                         onclick: move |_| {
+                                            tracing::info!(
+                                                finding_index = index,
+                                                rule_id = %finding_rule_id,
+                                                location = %finding_location,
+                                                navigation = ?navigation,
+                                                resolved_method = ?resolved_method,
+                                                "finding clicked"
+                                            );
                                             selected_finding.set(Some(index));
-                                            if let Some((type_part, method_part)) =
-                                                finding_location.split_once("::")
-                                            {
-                                                let tab_id =
-                                                    method_tab_id(type_part, method_part);
+                                            if let Some((type_name, method_name)) = resolved_method.as_ref() {
+                                                let tab_id = method_tab_id(type_name, method_name);
                                                 {
                                                     let mut tabs = open_tabs.write();
+                                                    tracing::debug!(
+                                                        tab_id = %tab_id,
+                                                        existing_tabs = ?tabs.iter().map(|tab| (&tab.id, &tab.type_name, &tab.method_name)).collect::<Vec<_>>(),
+                                                        "opening finding method tab"
+                                                    );
                                                     if !tabs.iter().any(|tab| tab.id == tab_id) {
                                                         tabs.push(IlTab {
                                                             id: tab_id.clone(),
                                                             kind: IlTabKind::Method,
-                                                            type_name: type_part.to_string(),
-                                                            method_name: Some(
-                                                                method_part.to_string(),
-                                                            ),
-                                                            title: method_part.to_string(),
-                                                            subtitle: type_part.to_string(),
+                                                            type_name: type_name.clone(),
+                                                            method_name: Some(method_name.clone()),
+                                                            title: method_name.clone(),
+                                                            subtitle: type_name.clone(),
                                                         });
+                                                        tracing::info!(tab_id = %tab_id, "added new finding tab");
+                                                    } else {
+                                                        tracing::info!(tab_id = %tab_id, "finding tab already open");
                                                     }
                                                 }
                                                 active_tab_id.set(Some(tab_id));
+                                                tracing::info!("set active tab from finding click");
+                                            } else {
+                                                tracing::warn!(
+                                                    finding_index = index,
+                                                    rule_id = %finding_rule_id,
+                                                    location = %finding_location,
+                                                    "finding click could not resolve a method to open"
+                                                );
                                             }
-                                            highlighted_il_offset.set(finding_offset);
                                         },
 
                                         div {

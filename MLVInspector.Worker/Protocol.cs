@@ -66,6 +66,10 @@ public sealed class DecompileParams
     /// <summary>Method name within the type. If null, decompiles the whole type.</summary>
     [JsonPropertyName("methodName")]
     public string? MethodName { get; set; }
+
+    /// <summary>Decompiler profile. Supported values: readable, analysis.</summary>
+    [JsonPropertyName("profile")]
+    public string? Profile { get; set; }
 }
 
 public sealed class DecompilePayload
@@ -82,6 +86,33 @@ public sealed class DecompilePayload
     /// <summary>The reconstructed C# source code.</summary>
     [JsonPropertyName("csharpSource")]
     public string CsharpSource { get; set; } = "";
+
+    [JsonPropertyName("profile")]
+    public string Profile { get; set; } = "readable";
+
+    [JsonPropertyName("sourceSpans")]
+    public List<SourceSpanEntry> SourceSpans { get; set; } = new();
+}
+
+public sealed class SourceSpanEntry
+{
+    [JsonPropertyName("typeName")]
+    public string? TypeName { get; set; }
+
+    [JsonPropertyName("methodName")]
+    public string? MethodName { get; set; }
+
+    [JsonPropertyName("ilStartOffset")]
+    public int IlStartOffset { get; set; }
+
+    [JsonPropertyName("ilEndOffset")]
+    public int IlEndOffset { get; set; }
+
+    [JsonPropertyName("startLine")]
+    public int StartLine { get; set; }
+
+    [JsonPropertyName("endLine")]
+    public int EndLine { get; set; }
 }
 
 public sealed class CompareParams

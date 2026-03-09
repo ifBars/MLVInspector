@@ -64,6 +64,7 @@ pub async fn export_project_bundle(
             assembly: assembly.path.clone(),
             type_name: None,
             method_name: None,
+            profile: Some("readable".to_string()),
         })
         .await?
         .csharp_source;
@@ -82,6 +83,7 @@ pub async fn export_project_bundle(
                 assembly: assembly.path.clone(),
                 type_name: Some(type_file.full_type_name.clone()),
                 method_name: None,
+                profile: Some("readable".to_string()),
             })
             .await?;
 

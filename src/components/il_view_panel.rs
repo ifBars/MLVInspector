@@ -3,43 +3,35 @@ use std::collections::HashMap;
 
 use dioxus::prelude::*;
 
-use crate::ipc::DecompileParams;
+use crate::ipc::{DecompileParams, DecompilePayload};
 use crate::state::AppState;
 
-use super::helpers::{extract_methods, method_tab_id};
+use super::csharp_highlight::highlight_csharp;
+use super::helpers::{
+    extract_findings, extract_methods, highlighted_csharp_lines,
+    highlighted_csharp_lines_from_source_spans, is_compiler_generated_type_name, method_tab_id,
+    resolve_method_reference,
+};
 use super::theme::{
     C_ACCENT_BLUE, C_ACCENT_GREEN, C_BG_BASE, C_BG_ELEVATED, C_BG_SURFACE, C_BORDER, C_TEXT_MUTED,
     C_TEXT_PRIMARY, C_TEXT_SECONDARY, FONT_MONO,
 };
 use super::view_models::{IlTab, IlTabKind, ViewMode};
 
+const DECOMPILE_PROFILE: &str = "readable";
+
 #[component]
 pub fn IlViewPanel(
     open_tabs: Signal<Vec<IlTab>>,
     active_tab_id: Signal<Option<String>>,
-    highlighted_il_offset: Signal<Option<i64>>,
+    selected_finding: Signal<Option<usize>>,
 ) -> Element {
     let state = use_context::<AppState>();
 
     // View mode and C# cache are local to this panel
     let mut view_mode = use_signal(|| ViewMode::Il);
-    let mut csharp_cache: Signal<HashMap<String, String>> = use_signal(HashMap::new);
+    let mut csharp_cache: Signal<HashMap<String, DecompilePayload>> = use_signal(HashMap::new);
     let mut csharp_loading = use_signal(|| false);
-
-    // Scroll to highlighted IL offset
-    use_effect(move || {
-        let offset = *highlighted_il_offset.read();
-        if let Some(off) = offset {
-            spawn(async move {
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                let js = format!(
-                    "const el = document.getElementById('il-{off}'); \
-                     if (el) el.scrollIntoView({{behavior:'smooth',block:'center'}});"
-                );
-                let _ = document::eval(&js).await;
-            });
-        }
-    });
 
     // Trigger C# decompilation when switching to C# view or changing active tab
     use_effect(move || {
@@ -70,10 +62,11 @@ pub fn IlViewPanel(
         let type_name = tab.type_name.clone();
         let method_name = tab.method_name.clone();
         let cache_key = format!(
-            "{}::{}::{}",
+            "{}::{}::{}::{}",
             assembly_path,
             type_name,
-            method_name.as_deref().unwrap_or("")
+            method_name.as_deref().unwrap_or(""),
+            DECOMPILE_PROFILE
         );
 
         if csharp_cache.read().contains_key(&cache_key) {
@@ -81,6 +74,10 @@ pub fn IlViewPanel(
         }
 
         let worker = state.worker.read().clone();
+        let cache_key_for_insert = cache_key.clone();
+        let assembly_path_for_error = assembly_path.clone();
+        let type_name_for_error = type_name.clone();
+        let method_name_for_error = method_name.clone();
         csharp_loading.set(true);
 
         spawn(async move {
@@ -89,15 +86,23 @@ pub fn IlViewPanel(
                     assembly: assembly_path,
                     type_name: Some(type_name),
                     method_name,
+                    profile: Some(DECOMPILE_PROFILE.to_string()),
                 })
                 .await;
 
-            let source = match result {
-                Ok(payload) => payload.csharp_source,
-                Err(e) => format!("// Decompilation error:\n// {e}"),
+            let payload = match result {
+                Ok(payload) => payload,
+                Err(e) => DecompilePayload {
+                    assembly_path: assembly_path_for_error,
+                    type_name: Some(type_name_for_error),
+                    method_name: method_name_for_error,
+                    csharp_source: format!("// Decompilation error:\n// {e}"),
+                    profile: DECOMPILE_PROFILE.to_string(),
+                    source_spans: Vec::new(),
+                },
             };
 
-            csharp_cache.write().insert(cache_key, source);
+            csharp_cache.write().insert(cache_key_for_insert, payload);
             csharp_loading.set(false);
         });
     });
@@ -115,6 +120,17 @@ pub fn IlViewPanel(
     } else {
         Vec::new()
     };
+    let findings = if let Some(ref id) = selected_id {
+        let scan_key = format!("{id}::scan");
+        state
+            .get_analysis_entry(&scan_key)
+            .as_ref()
+            .and_then(|e| e.result.as_ref())
+            .map(extract_findings)
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
 
     let active_tab = {
         let id = active_tab_id.read().clone();
@@ -126,7 +142,6 @@ pub fn IlViewPanel(
                 .cloned()
         })
     };
-    let selected_type_name = active_tab.as_ref().map(|tab| tab.type_name.clone());
     let active_method = active_tab.as_ref().and_then(|tab| {
         tab.method_name.as_ref().and_then(|method_name| {
             methods
@@ -135,6 +150,7 @@ pub fn IlViewPanel(
                 .cloned()
         })
     });
+    let selected_type_name = active_tab.as_ref().map(|tab| tab.type_name.clone());
     let selected_type_methods = selected_type_name
         .as_ref()
         .map(|type_name| {
@@ -150,6 +166,166 @@ pub fn IlViewPanel(
         .map(|tab| tab.kind == IlTabKind::Type)
         .unwrap_or(false)
         && !selected_type_methods.is_empty();
+
+    let active_finding = selected_finding().and_then(|index| findings.get(index).cloned());
+    let active_csharp_finding_span = active_finding.as_ref().and_then(|finding| {
+        let active_tab = active_tab.as_ref()?;
+        let method_name = active_tab.method_name.as_ref()?;
+        let navigation = finding.navigation.as_ref()?;
+
+        navigation
+            .method_spans
+            .iter()
+            .find(|span| {
+                resolve_method_reference(&methods, &span.type_name, &span.method_name).is_some_and(
+                    |(resolved_type, resolved_method)| {
+                        resolved_type == active_tab.type_name && resolved_method == *method_name
+                    },
+                )
+            })
+            .cloned()
+    });
+    let active_il_finding_span = active_finding.as_ref().and_then(|finding| {
+        let active_tab = active_tab.as_ref()?;
+        let method_name = active_tab.method_name.as_ref()?;
+        let navigation = finding.navigation.as_ref()?;
+
+        navigation
+            .method_spans
+            .iter()
+            .find(|span| span.type_name == active_tab.type_name && span.method_name == *method_name)
+            .cloned()
+    });
+    let active_generated_il_methods = active_finding
+        .as_ref()
+        .and_then(|finding| finding.navigation.as_ref())
+        .and_then(|navigation| {
+            let active_tab = active_tab.as_ref()?;
+            let method_name = active_tab.method_name.as_ref()?;
+
+            Some(
+                navigation
+                    .method_spans
+                    .iter()
+                    .filter(|span| {
+                        (span.type_name != active_tab.type_name || span.method_name != *method_name)
+                            && is_compiler_generated_type_name(&span.type_name)
+                            && resolve_method_reference(
+                                &methods,
+                                &span.type_name,
+                                &span.method_name,
+                            )
+                            .is_some_and(
+                                |(resolved_type, resolved_method)| {
+                                    resolved_type == active_tab.type_name
+                                        && resolved_method == *method_name
+                                },
+                            )
+                    })
+                    .filter_map(|span| {
+                        methods
+                            .iter()
+                            .find(|method| {
+                                method.type_name == span.type_name
+                                    && method.method_name == span.method_name
+                            })
+                            .cloned()
+                            .map(|method| (span.clone(), method))
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .unwrap_or_default();
+
+    let active_id_for_source = active_tab_id.read().clone();
+    let tabs_for_source = open_tabs.read().clone();
+    let assemblies_for_source = state.assemblies.read().clone();
+    let csharp_cache_key = active_id_for_source.and_then(|tab_id| {
+        let tab = tabs_for_source.into_iter().find(|t| t.id == tab_id)?;
+        let asm_id = selected_id.clone()?;
+        let asm = assemblies_for_source.into_iter().find(|a| a.id == asm_id)?;
+        Some(format!(
+            "{}::{}::{}::{}",
+            asm.path,
+            tab.type_name,
+            tab.method_name.as_deref().unwrap_or(""),
+            DECOMPILE_PROFILE
+        ))
+    });
+    let csharp_payload = csharp_cache_key
+        .as_ref()
+        .and_then(|key| csharp_cache.read().get(key).cloned());
+    let csharp_source = csharp_payload
+        .as_ref()
+        .map(|payload| payload.csharp_source.clone());
+    let highlighted_csharp_line_numbers =
+        match (csharp_payload.as_ref(), active_csharp_finding_span.as_ref()) {
+            (Some(payload), Some(span)) => {
+                let mut lines =
+                    highlighted_csharp_lines_from_source_spans(&payload.source_spans, span);
+                if lines.is_empty() {
+                    lines = highlighted_csharp_lines(&payload.csharp_source, &span.csharp_snippets);
+                }
+                if lines.is_empty() && !payload.csharp_source.is_empty() {
+                    vec![1]
+                } else {
+                    lines
+                }
+            }
+            _ => Vec::new(),
+        };
+    let effect_active_il_finding_span = active_il_finding_span.clone();
+    let effect_active_generated_il_methods = active_generated_il_methods.clone();
+    let effect_active_method = active_method.clone();
+    let effect_highlighted_csharp_line_numbers = highlighted_csharp_line_numbers.clone();
+
+    use_effect(move || {
+        let il_scroll_target = effect_active_il_finding_span
+            .clone()
+            .and_then(|span| {
+                span.il_offsets
+                    .first()
+                    .copied()
+                    .map(|offset| format!("il-{offset}"))
+            })
+            .or_else(|| {
+                effect_active_generated_il_methods
+                    .first()
+                    .and_then(|(span, _)| span.il_offsets.first().copied())
+                    .map(|offset| format!("generated-il-0-{offset}"))
+            })
+            .or_else(|| {
+                effect_active_method.as_ref().and_then(|method| {
+                    method
+                        .instructions
+                        .first()
+                        .map(|ins| format!("il-{}", ins.offset))
+                })
+            });
+
+        if il_scroll_target.is_none() && effect_highlighted_csharp_line_numbers.is_empty() {
+            return;
+        }
+
+        let scroll_target = match *view_mode.read() {
+            ViewMode::Il => il_scroll_target,
+            ViewMode::CSharp => effect_highlighted_csharp_line_numbers
+                .first()
+                .map(|line_number| format!("csharp-line-{line_number}")),
+        };
+
+        let Some(target_id) = scroll_target else {
+            return;
+        };
+
+        spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            let js = format!(
+                "const el = document.getElementById('{target_id}'); if (el) el.scrollIntoView({{behavior:'smooth',block:'center'}});"
+            );
+            let _ = document::eval(&js).await;
+        });
+    });
 
     let tabs = open_tabs.read().clone();
     let active_tab_id_value = active_tab_id.read().clone();
@@ -167,28 +343,6 @@ pub fn IlViewPanel(
                 span {
                     if view_mode() == ViewMode::CSharp { "C# View" } else { "IL View" }
                 }
-                if show_class_overview {
-                    if let Some(type_name) = selected_type_name.as_ref() {
-                        span {
-                            class: "badge panel-header-detail",
-                            style: format!(
-                                "color: {C_ACCENT_BLUE}; border-color: {C_ACCENT_BLUE}33; \
-                                 background: rgba(91, 155, 255, 0.08);"
-                            ),
-                            "{type_name}"
-                        }
-                    }
-                } else if let Some(ref m) = active_method {
-                    span {
-                        class: "badge panel-header-detail",
-                        style: format!(
-                            "color: {C_ACCENT_GREEN}; border-color: {C_ACCENT_GREEN}33; \
-                             background: rgba(110, 231, 183, 0.08);"
-                        ),
-                        "{m.type_name}.{m.method_name}"
-                    }
-                }
-
                 // IL / C# toggle
                 div {
                     style: format!(
@@ -250,7 +404,7 @@ pub fn IlViewPanel(
                                         class: "{tab_class}",
                                         onclick: move |_| {
                                             active_tab_id.set(Some(tab_id_select.clone()));
-                                            highlighted_il_offset.set(None);
+                                            selected_finding.set(None);
                                         },
 
                                         div {
@@ -303,7 +457,7 @@ pub fn IlViewPanel(
                                                     };
                                                     drop(tabs_mut);
                                                     active_tab_id.set(next_id);
-                                                    highlighted_il_offset.set(None);
+                                                    selected_finding.set(None);
                                                 }
                                             },
                                             svg {
@@ -380,7 +534,7 @@ pub fn IlViewPanel(
                                                         }
                                                     }
                                                     active_tab_id.set(Some(tab_id));
-                                                    highlighted_il_offset.set(None);
+                                                    selected_finding.set(None);
                                                 },
 
                                                 div {
@@ -402,10 +556,27 @@ pub fn IlViewPanel(
                                                 div {
                                                     style: format!("font-family: {FONT_MONO};"),
                                                     {
-                                                        let highlighted_val = *highlighted_il_offset.read();
+                                                        let highlighted_offsets = active_finding
+                                                            .as_ref()
+                                                            .and_then(|finding| finding.navigation.as_ref())
+                                                            .and_then(|navigation| {
+                                                                navigation.method_spans.iter().find(|span| {
+                                                                    resolve_method_reference(
+                                                                        &methods,
+                                                                        &span.type_name,
+                                                                        &span.method_name,
+                                                                    )
+                                                                    .is_some_and(|(resolved_type, resolved_method)| {
+                                                                        resolved_type == method.type_name
+                                                                            && resolved_method == method.method_name
+                                                                    })
+                                                                })
+                                                            })
+                                                            .map(|span| span.il_offsets.clone())
+                                                            .unwrap_or_default();
                                                         method.instructions.iter().map(move |ins| {
                                                             let is_highlighted =
-                                                                highlighted_val == Some(ins.offset);
+                                                                highlighted_offsets.contains(&ins.offset);
                                                             let row_class = if is_highlighted {
                                                                 "il-row highlighted"
                                                             } else {
@@ -474,9 +645,12 @@ pub fn IlViewPanel(
                             div {
                                 style: format!("font-family: {FONT_MONO};"),
                                 {
-                                    let highlighted_val = *highlighted_il_offset.read();
+                                    let highlighted_offsets = active_il_finding_span
+                                        .as_ref()
+                                        .map(|span| span.il_offsets.clone())
+                                        .unwrap_or_default();
                                     method.instructions.iter().map(move |ins| {
-                                        let is_highlighted = highlighted_val == Some(ins.offset);
+                                        let is_highlighted = highlighted_offsets.contains(&ins.offset);
                                         let row_class = if is_highlighted {
                                             "il-row highlighted"
                                         } else {
@@ -511,6 +685,91 @@ pub fn IlViewPanel(
                                     })
                                 }
                             }
+                            if !active_generated_il_methods.is_empty() {
+                                div {
+                                    style: format!(
+                                        "margin-top: 16px; padding: 10px 12px; background: {C_BG_SURFACE}; \
+                                         border-radius: 8px; border: 1px solid {C_BORDER};"
+                                    ),
+                                    div {
+                                        style: format!(
+                                            "font-size: 11px; font-weight: 700; color: {C_TEXT_PRIMARY}; \
+                                             margin-bottom: 4px;"
+                                        ),
+                                        "Async/Generated Execution Body"
+                                    }
+                                    div {
+                                        style: format!(
+                                            "font-size: 10px; color: {C_TEXT_SECONDARY}; line-height: 1.5; \
+                                             margin-bottom: 10px;"
+                                        ),
+                                        "The selected method starts a compiler-generated async/iterator body. \
+                                         The finding's executable IL is highlighted below."
+                                    }
+                                    for (generated_index, (span, generated_method)) in active_generated_il_methods.iter().enumerate() {
+                                        div {
+                                            key: "generated-method-{generated_index}-{generated_method.type_name}-{generated_method.method_name}",
+                                            style: format!(
+                                                "margin-top: 10px; padding-top: 10px; border-top: 1px solid {C_BORDER};"
+                                            ),
+                                            div {
+                                                style: format!(
+                                                    "font-size: 11px; font-weight: 700; font-family: {FONT_MONO}; \
+                                                     color: {C_TEXT_PRIMARY}; margin-bottom: 3px;"
+                                                ),
+                                                "{generated_method.method_name}"
+                                            }
+                                            div {
+                                                style: format!(
+                                                    "font-size: 10px; font-family: {FONT_MONO}; color: {C_TEXT_MUTED}; \
+                                                     line-height: 1.4; margin-bottom: 8px;"
+                                                ),
+                                                "{generated_method.type_name}"
+                                            }
+                                            div {
+                                                style: format!("font-family: {FONT_MONO};"),
+                                                {
+                                                    let highlighted_offsets = span.il_offsets.clone();
+                                                    generated_method.instructions.iter().map(move |ins| {
+                                                        let is_highlighted = highlighted_offsets.contains(&ins.offset);
+                                                        let row_class = if is_highlighted {
+                                                            "il-row highlighted"
+                                                        } else {
+                                                            "il-row"
+                                                        };
+                                                        rsx! {
+                                                            div {
+                                                                key: "generated-{generated_index}-{ins.offset}-{ins.op_code}",
+                                                                id: "generated-il-{generated_index}-{ins.offset}",
+                                                                class: "{row_class}",
+                                                                span {
+                                                                    style: format!(
+                                                                        "color: {C_ACCENT_BLUE}; font-size: 11px;"
+                                                                    ),
+                                                                    "IL_{ins.offset:04X}"
+                                                                }
+                                                                span {
+                                                                    style: format!(
+                                                                        "color: {C_ACCENT_GREEN}; font-size: 11px; \
+                                                                         font-weight: 500;"
+                                                                    ),
+                                                                    "{ins.op_code}"
+                                                                }
+                                                                span {
+                                                                    style: format!(
+                                                                        "color: {C_TEXT_SECONDARY}; font-size: 11px;"
+                                                                    ),
+                                                                    "{ins.operand}"
+                                                                }
+                                                            }
+                                                        }
+                                                    })
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                     } else {
@@ -526,44 +785,54 @@ pub fn IlViewPanel(
                                 }
                             }
                         } else {
-                            {
-                                let active_id = active_tab_id.read().clone();
-                                let tabs_snap = open_tabs.read().clone();
-                                let sel_id = state.selected_id.read().clone();
-                                let assemblies_snap = state.assemblies.read().clone();
+                            if let Some(src) = csharp_source.clone() {
+                                {
+                                    let highlighted = highlight_csharp(&src);
 
-                                let cache_key = active_id.and_then(|tab_id| {
-                                    let tab = tabs_snap.into_iter().find(|t| t.id == tab_id)?;
-                                    let asm_id = sel_id?;
-                                    let asm = assemblies_snap.into_iter().find(|a| a.id == asm_id)?;
-                                    Some(format!(
-                                        "{}::{}::{}",
-                                        asm.path,
-                                        tab.type_name,
-                                        tab.method_name.as_deref().unwrap_or("")
-                                    ))
-                                });
-
-                                let source = cache_key
-                                    .as_ref()
-                                    .and_then(|k| csharp_cache.read().get(k).cloned());
-
-                                rsx! {
-                                    if let Some(src) = source {
+                                    rsx! {
                                         pre {
+                                            class: "csharp-source",
                                             style: format!(
                                                 "font-family: {FONT_MONO}; font-size: 11px; \
-                                                 line-height: 1.7; color: {C_TEXT_SECONDARY}; \
-                                                 white-space: pre-wrap; word-break: break-all;"
+                                                 line-height: 1.7; color: {C_TEXT_SECONDARY};"
                                             ),
-                                            "{src}"
-                                        }
-                                    } else {
-                                        div {
-                                            class: "empty-state",
-                                            p { "Select a method or type tab to view C# source" }
+                                            for (line_index, line) in highlighted.into_iter().enumerate() {
+                                                {
+                                                    let line_number = line_index + 1;
+                                                    let is_empty_line = line.is_empty();
+                                                    let is_highlighted = highlighted_csharp_line_numbers
+                                                        .contains(&line_number);
+                                                    let line_class = if is_highlighted {
+                                                        "csharp-line highlighted"
+                                                    } else {
+                                                        "csharp-line"
+                                                    };
+                                                    rsx! {
+                                                        span {
+                                                            key: "csharp-line-{line_number}",
+                                                            id: "csharp-line-{line_number}",
+                                                            class: "{line_class}",
+                                                            for (segment_index, segment) in line.into_iter().enumerate() {
+                                                                span {
+                                                                    key: "csharp-segment-{line_index}-{segment_index}",
+                                                                    class: segment.kind.class_name(),
+                                                                    "{segment.text}"
+                                                                }
+                                                            }
+                                                            if is_empty_line {
+                                                                " "
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
+                                }
+                            } else {
+                                div {
+                                    class: "empty-state",
+                                    p { "Select a method or type tab to view C# source" }
                                 }
                             }
                         }

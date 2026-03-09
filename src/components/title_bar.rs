@@ -2,10 +2,10 @@
 use dioxus::prelude::*;
 use dioxus_desktop::window;
 
-use crate::services::export_project::{export_project_bundle, open_in_file_explorer};
 use crate::state::AppState;
 
-use super::analysis::run_analysis;
+use super::commands::{execute_command, CommandContext, CommandId};
+use super::overlay::OverlayKind;
 use super::theme::{C_ACCENT_GREEN, C_BORDER, C_TEXT_PRIMARY};
 use super::view_models::IlTab;
 
@@ -13,12 +13,12 @@ const APP_ICON: Asset = asset!("/assets/icon.png");
 
 #[component]
 pub fn TitleBar(
-    show_command_palette: Signal<bool>,
+    active_overlay: Signal<Option<OverlayKind>>,
     show_scan_panel: Signal<bool>,
     last_error: Signal<String>,
     open_tabs: Signal<Vec<IlTab>>,
     active_tab_id: Signal<Option<String>>,
-    highlighted_il_offset: Signal<Option<i64>>,
+    selected_finding: Signal<Option<usize>>,
 ) -> Element {
     let state = use_context::<AppState>();
     let desktop_window = window();
@@ -28,17 +28,19 @@ pub fn TitleBar(
     let desktop_window_min = desktop_window.clone();
     let desktop_window_full = desktop_window.clone();
     let desktop_window_close = desktop_window.clone();
-    let selected_assembly = state.selected_id.read().clone().and_then(|selected_id| {
-        state
-            .assemblies
-            .read()
-            .iter()
-            .find(|assembly| assembly.id == selected_id)
-            .cloned()
-    });
-    let can_export = selected_assembly.is_some();
+    let can_export = state.selected_id.read().is_some();
     let last_export_path = state.last_export_path.read().clone();
     let can_open_export = last_export_path.is_some();
+
+    let command_context = CommandContext {
+        state,
+        active_overlay,
+        show_scan_panel,
+        last_error,
+        open_tabs,
+        active_tab_id,
+        selected_finding,
+    };
 
     rsx! {
         div {
@@ -90,10 +92,14 @@ pub fn TitleBar(
 
                     // Toggle findings panel
                     button {
-                        class: if show_command_palette() { "tool-btn active" } else { "tool-btn" },
+                        class: if active_overlay() == Some(OverlayKind::CommandPalette) {
+                            "tool-btn active"
+                        } else {
+                            "tool-btn"
+                        },
                         title: "Search Tools",
                         "aria-label": "Search Tools",
-                        onclick: move |_| show_command_palette.set(true),
+                        onclick: move |_| execute_command(command_context, CommandId::OpenCommandPalette),
                         svg {
                             width: "13", height: "13", view_box: "0 0 24 24", fill: "none",
                             stroke: "currentColor", stroke_width: "2",
@@ -103,10 +109,27 @@ pub fn TitleBar(
                     }
 
                     button {
+                        class: if active_overlay() == Some(OverlayKind::Settings) {
+                            "tool-btn active"
+                        } else {
+                            "tool-btn"
+                        },
+                        title: "Settings",
+                        "aria-label": "Settings",
+                        onclick: move |_| execute_command(command_context, CommandId::OpenSettings),
+                        svg {
+                            width: "13", height: "13", view_box: "0 0 24 24", fill: "none",
+                            stroke: "currentColor", stroke_width: "2",
+                            circle { cx: "12", cy: "12", r: "3" }
+                            path { d: "M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.1A1.7 1.7 0 0 0 10.09 3H10a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.1A1.7 1.7 0 0 0 21 10.09V10a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z" }
+                        }
+                    }
+
+                    button {
                         class: if show_scan_panel() { "tool-btn active" } else { "tool-btn" },
                         title: if show_scan_panel() { "Hide Findings" } else { "Show Findings" },
                         "aria-label": if show_scan_panel() { "Hide Findings" } else { "Show Findings" },
-                        onclick: move |_| show_scan_panel.toggle(),
+                        onclick: move |_| execute_command(command_context, CommandId::ToggleFindings),
                         svg {
                             width: "13", height: "13", view_box: "0 0 24 24", fill: "none",
                             stroke: "currentColor", stroke_width: "2",
@@ -120,12 +143,7 @@ pub fn TitleBar(
                         class: "tool-btn",
                         title: "Clear Workspace",
                         "aria-label": "Clear Workspace",
-                        onclick: move |_| {
-                            state.clear_all();
-                            open_tabs.write().clear();
-                            active_tab_id.set(None);
-                            highlighted_il_offset.set(None);
-                        },
+                        onclick: move |_| execute_command(command_context, CommandId::ClearWorkspace),
                         svg {
                             width: "13", height: "13", view_box: "0 0 24 24", fill: "none",
                             stroke: "currentColor", stroke_width: "2",
@@ -139,19 +157,7 @@ pub fn TitleBar(
                         class: "tool-btn",
                         title: "Open Assembly",
                         "aria-label": "Open Assembly",
-                        onclick: move |_| {
-                            if let Some(path) = rfd::FileDialog::new().pick_file() {
-                                let file_path = path.display().to_string();
-                                state.open_assembly(file_path.clone());
-                                open_tabs.write().clear();
-                                active_tab_id.set(None);
-                                highlighted_il_offset.set(None);
-                                let id = state.selected_id.read().clone();
-                                if let Some(assembly_id) = id {
-                                    run_analysis(state, last_error, assembly_id, file_path);
-                                }
-                            }
-                        },
+                        onclick: move |_| execute_command(command_context, CommandId::OpenAssembly),
                         svg {
                             width: "13", height: "13", view_box: "0 0 24 24", fill: "none",
                             stroke: "currentColor", stroke_width: "2",
@@ -166,35 +172,7 @@ pub fn TitleBar(
                         title: "Export Project",
                         "aria-label": "Export Project",
                         disabled: !can_export,
-                        onclick: move |_| {
-                            let Some(assembly) = selected_assembly.clone() else {
-                                last_error.set("Select an assembly before exporting".to_string());
-                                return;
-                            };
-
-                            let Some(folder) = rfd::FileDialog::new()
-                                .set_title("Export Project Bundle")
-                                .pick_folder()
-                            else {
-                                return;
-                            };
-
-                            let worker = state.worker.read().clone();
-                            let analysis = state
-                                .get_analysis_entry(&format!("{}::explore", assembly.id))
-                                .and_then(|entry| entry.result);
-
-                            spawn(async move {
-                                match export_project_bundle(worker, assembly, analysis, folder).await {
-                                    Ok(path) => {
-                                        state.set_last_export_path(Some(path.display().to_string()));
-                                        last_error.set(String::new());
-                                        tracing::info!(path = %path.display(), "exported project bundle");
-                                    }
-                                    Err(err) => last_error.set(err.to_string()),
-                                }
-                            });
-                        },
+                        onclick: move |_| execute_command(command_context, CommandId::ExportProject),
                         svg {
                             width: "13", height: "13", view_box: "0 0 24 24", fill: "none",
                             stroke: "currentColor", stroke_width: "2",
@@ -209,16 +187,7 @@ pub fn TitleBar(
                         title: "Open Export Folder",
                         "aria-label": "Open Export Folder",
                         disabled: !can_open_export,
-                        onclick: move |_| {
-                            let Some(path) = last_export_path.clone() else {
-                                last_error.set("No export folder is available yet".to_string());
-                                return;
-                            };
-
-                            if let Err(err) = open_in_file_explorer(&path) {
-                                last_error.set(err.to_string());
-                            }
-                        },
+                        onclick: move |_| execute_command(command_context, CommandId::OpenExportFolder),
                         svg {
                             width: "13", height: "13", view_box: "0 0 24 24", fill: "none",
                             stroke: "currentColor", stroke_width: "2",

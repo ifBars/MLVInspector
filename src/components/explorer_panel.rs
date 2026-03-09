@@ -17,7 +17,7 @@ pub fn ExplorerPanel(
     sidebar_width: f64,
     open_tabs: Signal<Vec<IlTab>>,
     active_tab_id: Signal<Option<String>>,
-    highlighted_il_offset: Signal<Option<i64>>,
+    selected_finding: Signal<Option<usize>>,
 ) -> Element {
     let state = use_context::<AppState>();
 
@@ -129,7 +129,7 @@ pub fn ExplorerPanel(
                                             state.select_assembly(asm_id_select.clone());
                                             open_tabs.write().clear();
                                             active_tab_id.set(None);
-                                            highlighted_il_offset.set(None);
+                                            selected_finding.set(None);
                                         },
 
                                         div {
@@ -161,7 +161,7 @@ pub fn ExplorerPanel(
                                                     state.close_assembly(asm_id_close.clone());
                                                     open_tabs.write().clear();
                                                     active_tab_id.set(None);
-                                                    highlighted_il_offset.set(None);
+                                                    selected_finding.set(None);
                                                 },
                                                 svg {
                                                     width: "10", height: "10", view_box: "0 0 24 24",
@@ -380,7 +380,7 @@ pub fn ExplorerPanel(
                                                                             }
                                                                         }
                                                                         active_tab_id.set(Some(tab_id));
-                                                                        highlighted_il_offset.set(None);
+                                                                        selected_finding.set(None);
                                                                         collapsed_types
                                                                             .write()
                                                                             .insert(type_name_select.clone());
@@ -447,7 +447,7 @@ pub fn ExplorerPanel(
                                                                                         }
                                                                                     }
                                                                                     active_tab_id.set(Some(tab_id));
-                                                                                    highlighted_il_offset.set(None);
+                                                                                    selected_finding.set(None);
                                                                                 },
                                                                                 div {
                                                                                     style: format!(

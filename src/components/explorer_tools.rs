@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use super::commands::{CommandId, PaletteCommandItem};
 use crate::types::{AnalysisEntry, OpenAssembly};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -8,14 +9,6 @@ pub enum PaletteEntryKind {
     Assembly,
     Type,
     Method,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PaletteAction {
-    RunAnalysis,
-    ToggleFindings,
-    ExportProject,
-    OpenExportFolder,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -28,56 +21,34 @@ pub struct PaletteEntry {
     pub assembly_id: Option<String>,
     pub type_name: Option<String>,
     pub method_name: Option<String>,
-    pub action: Option<PaletteAction>,
+    pub command_id: Option<CommandId>,
+    pub shortcut_label: Option<String>,
 }
 
 pub fn build_palette_entries(
     assemblies: &[OpenAssembly],
     analysis_entries: &HashMap<String, AnalysisEntry>,
-    has_exported_project: bool,
+    action_commands: &[PaletteCommandItem],
     query: &str,
 ) -> Vec<PaletteEntry> {
     let normalized = normalize_query(query);
     let mut entries = Vec::new();
 
-    let mut action_entries = vec![
-        (
-            PaletteAction::RunAnalysis,
-            "Run analysis",
-            "Re-run explore and scan for the selected assembly",
-        ),
-        (
-            PaletteAction::ToggleFindings,
-            "Toggle findings panel",
-            "Show or hide the scan findings sidebar",
-        ),
-        (
-            PaletteAction::ExportProject,
-            "Export project",
-            "Write a portable bundle with decompiled source and analysis JSON",
-        ),
-    ];
-
-    if has_exported_project {
-        action_entries.push((
-            PaletteAction::OpenExportFolder,
-            "Open export folder",
-            "Reveal the most recently exported decompiled project",
-        ));
-    }
-
-    for (action, title, subtitle) in action_entries {
-        if normalized.is_empty() || matches_query(&normalized, &[title, subtitle]) {
+    for command in action_commands {
+        if normalized.is_empty()
+            || matches_query(&normalized, &[command.title, command.description])
+        {
             entries.push(PaletteEntry {
-                id: format!("action::{title}"),
+                id: format!("action::{:?}", command.command_id),
                 kind: PaletteEntryKind::Action,
-                title: title.to_string(),
-                subtitle: subtitle.to_string(),
+                title: command.title.to_string(),
+                subtitle: command.description.to_string(),
                 group_label: "Actions",
                 assembly_id: None,
                 type_name: None,
                 method_name: None,
-                action: Some(action),
+                command_id: Some(command.command_id),
+                shortcut_label: command.shortcut_label.clone(),
             });
         }
     }
@@ -93,7 +64,8 @@ pub fn build_palette_entries(
                 assembly_id: Some(assembly.id.clone()),
                 type_name: None,
                 method_name: None,
-                action: None,
+                command_id: None,
+                shortcut_label: None,
             });
         }
     }
@@ -135,7 +107,8 @@ pub fn build_palette_entries(
                     assembly_id: Some(assembly.id.clone()),
                     type_name: Some(type_name),
                     method_name: None,
-                    action: None,
+                    command_id: None,
+                    shortcut_label: None,
                 });
             }
         }
@@ -165,7 +138,8 @@ pub fn build_palette_entries(
                     assembly_id: Some(assembly.id.clone()),
                     type_name: Some(method.type_name.clone()),
                     method_name: Some(method.method_name.clone()),
-                    action: None,
+                    command_id: None,
+                    shortcut_label: None,
                 });
             }
         }
@@ -230,7 +204,7 @@ mod tests {
             },
         );
 
-        let entries = build_palette_entries(&assemblies, &analysis_entries, false, "download");
+        let entries = build_palette_entries(&assemblies, &analysis_entries, &[], "download");
 
         assert!(entries
             .iter()
@@ -239,12 +213,22 @@ mod tests {
             .iter()
             .any(|entry| entry.kind == PaletteEntryKind::Action));
 
-        let default_entries = build_palette_entries(&assemblies, &analysis_entries, true, "");
+        let default_entries = build_palette_entries(
+            &assemblies,
+            &analysis_entries,
+            &[PaletteCommandItem {
+                command_id: CommandId::OpenExportFolder,
+                title: "Open export folder",
+                description: "Reveal the most recently exported decompiled project",
+                shortcut_label: Some("Ctrl+Shift+O".to_string()),
+            }],
+            "",
+        );
         assert!(default_entries
             .iter()
             .any(|entry| entry.kind == PaletteEntryKind::Action));
         assert!(default_entries
             .iter()
-            .any(|entry| entry.action == Some(PaletteAction::OpenExportFolder)));
+            .any(|entry| entry.command_id == Some(CommandId::OpenExportFolder)));
     }
 }

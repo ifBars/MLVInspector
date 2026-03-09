@@ -1,28 +1,34 @@
 use dioxus::prelude::*;
 
-use crate::services::export_project::{export_project_bundle, open_in_file_explorer};
+use crate::shortcuts::ShortcutSettings;
 use crate::state::AppState;
 
-use super::analysis::run_analysis;
-use super::explorer_tools::{build_palette_entries, PaletteAction, PaletteEntry, PaletteEntryKind};
+use super::commands::{execute_command, palette_command_items, CommandContext};
+use super::explorer_tools::{build_palette_entries, PaletteEntry, PaletteEntryKind};
 use super::helpers::{method_tab_id, type_tab_id};
+use super::overlay::OverlayKind;
 use super::theme::{C_TEXT_MUTED, C_TEXT_PRIMARY, FONT_MONO};
 use super::view_models::{IlTab, IlTabKind};
 
 #[component]
 pub fn CommandPalette(
-    is_open: Signal<bool>,
+    active_overlay: Signal<Option<OverlayKind>>,
+    shortcut_settings: Signal<ShortcutSettings>,
     show_scan_panel: Signal<bool>,
     last_error: Signal<String>,
     open_tabs: Signal<Vec<IlTab>>,
     active_tab_id: Signal<Option<String>>,
-    highlighted_il_offset: Signal<Option<i64>>,
+    selected_finding: Signal<Option<usize>>,
 ) -> Element {
     let state = use_context::<AppState>();
     let mut query = use_signal(String::new);
+    let is_open = active_overlay() == Some(OverlayKind::CommandPalette);
 
     use_effect(move || {
-        if !is_open() {
+        if active_overlay() != Some(OverlayKind::CommandPalette) {
+            if !query().is_empty() {
+                query.set(String::new());
+            }
             return;
         }
 
@@ -36,19 +42,14 @@ pub fn CommandPalette(
 
     let assemblies = state.assemblies.read().clone();
     let analysis_entries = state.analysis_entries.read().clone();
-    let has_exported_project = state.last_export_path.read().is_some();
-    let entries = if is_open() {
-        build_palette_entries(
-            &assemblies,
-            &analysis_entries,
-            has_exported_project,
-            &query(),
-        )
+    let action_commands = palette_command_items(state, active_overlay(), &shortcut_settings());
+    let entries = if is_open {
+        build_palette_entries(&assemblies, &analysis_entries, &action_commands, &query())
     } else {
         Vec::new()
     };
 
-    if !is_open() {
+    if !is_open {
         return rsx! {};
     }
 
@@ -56,7 +57,7 @@ pub fn CommandPalette(
         div {
             class: "command-palette-overlay",
             onclick: move |_| {
-                is_open.set(false);
+                active_overlay.set(None);
                 query.set(String::new());
             },
 
@@ -84,7 +85,7 @@ pub fn CommandPalette(
                     button {
                         class: "command-palette-close",
                         onclick: move |_| {
-                            is_open.set(false);
+                            active_overlay.set(None);
                             query.set(String::new());
                         },
                         "Close"
@@ -127,13 +128,13 @@ pub fn CommandPalette(
                                                             onclick: move |_| {
                                                                 handle_palette_entry(
                                                                     state,
-                                                                    is_open,
+                                                                    active_overlay,
                                                                     query,
                                                                     show_scan_panel,
                                                                     last_error,
                                                                     open_tabs,
                                                                     active_tab_id,
-                                                                    highlighted_il_offset,
+                                                                    selected_finding,
                                                                     click_entry.clone(),
                                                                 );
                                                             },
@@ -155,6 +156,12 @@ pub fn CommandPalette(
                                                                         "font-size: 10px; color: {C_TEXT_MUTED}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
                                                                     ),
                                                                     "{palette_entry.subtitle}"
+                                                                }
+                                                            }
+                                                            if let Some(shortcut_label) = palette_entry.shortcut_label.clone() {
+                                                                div {
+                                                                    class: "shortcut-badge",
+                                                                    "{shortcut_label}"
                                                                 }
                                                             }
                                                         }
@@ -182,66 +189,35 @@ pub fn CommandPalette(
 #[allow(clippy::too_many_arguments)]
 fn handle_palette_entry(
     state: AppState,
-    mut is_open: Signal<bool>,
+    mut active_overlay: Signal<Option<OverlayKind>>,
     mut query: Signal<String>,
-    mut show_scan_panel: Signal<bool>,
-    mut last_error: Signal<String>,
+    show_scan_panel: Signal<bool>,
+    last_error: Signal<String>,
     mut open_tabs: Signal<Vec<IlTab>>,
     mut active_tab_id: Signal<Option<String>>,
-    mut highlighted_il_offset: Signal<Option<i64>>,
+    mut selected_finding: Signal<Option<usize>>,
     entry: PaletteEntry,
 ) {
-    match entry.action {
-        Some(PaletteAction::ToggleFindings) => {
-            show_scan_panel.toggle();
-        }
-        Some(PaletteAction::RunAnalysis) => {
-            if let Some(assembly) = selected_assembly(state) {
-                run_analysis(state, last_error, assembly.id, assembly.path);
-            } else {
-                last_error.set("Select an assembly before running analysis".to_string());
-                return;
+    match entry.command_id {
+        Some(command_id) => {
+            execute_command(
+                CommandContext {
+                    state,
+                    active_overlay,
+                    show_scan_panel,
+                    last_error,
+                    open_tabs,
+                    active_tab_id,
+                    selected_finding,
+                },
+                command_id,
+            );
+
+            if active_overlay() == Some(OverlayKind::CommandPalette) {
+                active_overlay.set(None);
             }
-        }
-        Some(PaletteAction::ExportProject) => {
-            let Some(assembly) = selected_assembly(state) else {
-                last_error.set("Select an assembly before exporting".to_string());
-                return;
-            };
-
-            let Some(folder) = rfd::FileDialog::new()
-                .set_title("Export Project Bundle")
-                .pick_folder()
-            else {
-                return;
-            };
-
-            let worker = state.worker.read().clone();
-            let analysis = state
-                .get_analysis_entry(&format!("{}::explore", assembly.id))
-                .and_then(|analysis_entry| analysis_entry.result);
-
-            spawn(async move {
-                match export_project_bundle(worker, assembly, analysis, folder).await {
-                    Ok(path) => {
-                        tracing::info!(path = %path.display(), "exported project bundle");
-                        state.set_last_export_path(Some(path.display().to_string()));
-                        last_error.set(String::new());
-                    }
-                    Err(err) => last_error.set(err.to_string()),
-                }
-            });
-        }
-        Some(PaletteAction::OpenExportFolder) => {
-            let Some(path) = state.last_export_path.read().clone() else {
-                last_error.set("No export folder is available yet".to_string());
-                return;
-            };
-
-            if let Err(err) = open_in_file_explorer(&path) {
-                last_error.set(err.to_string());
-                return;
-            }
+            query.set(String::new());
+            return;
         }
         None => {
             if let Some(assembly_id) = entry.assembly_id.clone() {
@@ -252,7 +228,7 @@ fn handle_palette_entry(
                 PaletteEntryKind::Assembly => {
                     open_tabs.write().clear();
                     active_tab_id.set(None);
-                    highlighted_il_offset.set(None);
+                    selected_finding.set(None);
                 }
                 PaletteEntryKind::Type => {
                     let Some(type_name) = entry.type_name.clone() else {
@@ -278,7 +254,7 @@ fn handle_palette_entry(
                         }
                     }
                     active_tab_id.set(Some(tab_id));
-                    highlighted_il_offset.set(None);
+                    selected_finding.set(None);
                 }
                 PaletteEntryKind::Method => {
                     let (Some(type_name), Some(method_name)) =
@@ -301,23 +277,13 @@ fn handle_palette_entry(
                         }
                     }
                     active_tab_id.set(Some(tab_id));
-                    highlighted_il_offset.set(None);
+                    selected_finding.set(None);
                 }
                 PaletteEntryKind::Action => {}
             }
         }
     }
 
-    is_open.set(false);
+    active_overlay.set(None);
     query.set(String::new());
-}
-
-fn selected_assembly(state: AppState) -> Option<crate::types::OpenAssembly> {
-    let selected_id = state.selected_id.read().clone()?;
-    state
-        .assemblies
-        .read()
-        .iter()
-        .find(|assembly| assembly.id == selected_id)
-        .cloned()
 }

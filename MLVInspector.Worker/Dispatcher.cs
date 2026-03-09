@@ -1,7 +1,10 @@
 using System.Text.RegularExpressions;
+using DecompilerSequencePoint = ICSharpCode.Decompiler.DebugInfo.SequencePoint;
 using ICSharpCode.Decompiler;
 using ICSharpCode.Decompiler.CSharp;
+using ICSharpCode.Decompiler.CSharp.Syntax;
 using ICSharpCode.Decompiler.Metadata;
+using ICSharpCode.Decompiler.CSharp.OutputVisitor;
 using ICSharpCode.Decompiler.TypeSystem;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
@@ -15,6 +18,12 @@ namespace ILInspector.Worker;
 internal sealed class Dispatcher
 {
     private readonly AssemblyCache _cache;
+
+    private enum DecompileProfile
+    {
+        Readable,
+        Analysis,
+    }
 
     public Dispatcher(AssemblyCache cache) => _cache = cache;
 
@@ -184,10 +193,12 @@ internal sealed class Dispatcher
 
     public DecompilePayload Decompile(DecompileParams p)
     {
-        var decompiler = CreateDecompiler(p.Assembly);
+        var profile = ParseDecompileProfile(p.Profile);
+        var decompiler = CreateDecompiler(p.Assembly, profile);
         var requestedTypeName = NormalizeRequestedName(p.TypeName);
         var requestedMethodName = NormalizeRequestedName(p.MethodName);
         string source;
+        var sourceSpans = new List<SourceSpanEntry>();
 
         try
         {
@@ -221,9 +232,18 @@ internal sealed class Dispatcher
                         var method = typeDef.Methods
                             .FirstOrDefault(m => m.Name == requestedMethodName);
 
-                        source = method != null
-                            ? decompiler.DecompileAsString(method.MetadataToken)
-                            : decompiler.DecompileTypeAsString(fullName);
+                        if (method != null)
+                        {
+                            (source, sourceSpans) = DecompileMethodDocument(
+                                decompiler,
+                                method,
+                                requestedTypeName,
+                                requestedMethodName);
+                        }
+                        else
+                        {
+                            source = decompiler.DecompileTypeAsString(fullName);
+                        }
                     }
                     else
                     {
@@ -243,6 +263,7 @@ internal sealed class Dispatcher
         }
         catch (Exception ex)
         {
+            sourceSpans.Clear();
             source = requestedTypeName == null
                 ? BuildTypeWiseReconstruction(
                     EnumerateReconstructableTypeNames(_cache.Load(p.Assembly)),
@@ -257,6 +278,8 @@ internal sealed class Dispatcher
             TypeName = requestedTypeName,
             MethodName = requestedMethodName,
             CsharpSource = source,
+            Profile = ToWireProfileName(profile),
+            SourceSpans = sourceSpans,
         };
     }
 
@@ -267,15 +290,9 @@ internal sealed class Dispatcher
     /// reference assemblies, and NuGet packages automatically instead of
     /// failing on unresolved type references.
     /// </summary>
-    private static CSharpDecompiler CreateDecompiler(string assemblyPath)
+    private static CSharpDecompiler CreateDecompiler(string assemblyPath, DecompileProfile profile)
     {
-        var settings = new DecompilerSettings
-        {
-            ThrowOnAssemblyResolveErrors = false,
-            // Never strip code — for security analysis we want to see everything.
-            RemoveDeadCode = false,
-            RemoveDeadStores = false,
-        };
+        var settings = CreateDecompilerSettings(profile);
 
         var resolver = new UniversalAssemblyResolver(
             assemblyPath,
@@ -289,6 +306,96 @@ internal sealed class Dispatcher
             resolver.AddSearchDirectory(dir);
 
         return new CSharpDecompiler(assemblyPath, resolver, settings);
+    }
+
+    private static DecompilerSettings CreateDecompilerSettings(DecompileProfile profile)
+    {
+        var settings = new DecompilerSettings(LanguageVersion.Latest)
+        {
+            ThrowOnAssemblyResolveErrors = false,
+            AsyncAwait = true,
+            YieldReturn = true,
+            LocalFunctions = true,
+            PatternMatching = true,
+            FileScopedNamespaces = true,
+            UseEnhancedUsing = true,
+        };
+
+        if (profile == DecompileProfile.Readable)
+        {
+            settings.RemoveDeadCode = true;
+            settings.RemoveDeadStores = true;
+            settings.AggressiveInlining = true;
+        }
+        else
+        {
+            settings.RemoveDeadCode = false;
+            settings.RemoveDeadStores = false;
+        }
+
+        return settings;
+    }
+
+    private static DecompileProfile ParseDecompileProfile(string? value)
+    {
+        return string.Equals(value, "analysis", StringComparison.OrdinalIgnoreCase)
+            ? DecompileProfile.Analysis
+            : DecompileProfile.Readable;
+    }
+
+    private static string ToWireProfileName(DecompileProfile profile)
+    {
+        return profile == DecompileProfile.Analysis ? "analysis" : "readable";
+    }
+
+    private static (string Source, List<SourceSpanEntry> SourceSpans) DecompileMethodDocument(
+        CSharpDecompiler decompiler,
+        IMethod method,
+        string typeName,
+        string methodName)
+    {
+        var syntaxTree = decompiler.Decompile(method.MetadataToken);
+        var source = RenderSyntaxTreeWithLocations(syntaxTree);
+        var sourceSpans = BuildSourceSpans(
+            decompiler
+                .CreateSequencePoints(syntaxTree)
+                .Values
+                .SelectMany(points => points),
+            typeName,
+            methodName);
+
+        return (source, sourceSpans);
+    }
+
+    private static string RenderSyntaxTreeWithLocations(SyntaxTree syntaxTree)
+    {
+        using var writer = new StringWriter();
+        var formatting = FormattingOptionsFactory.CreateAllman();
+        var tokenWriter = TokenWriter.CreateWriterThatSetsLocationsInAST(writer);
+        syntaxTree.AcceptVisitor(new CSharpOutputVisitor(tokenWriter, formatting));
+        return writer.ToString();
+    }
+
+    internal static List<SourceSpanEntry> BuildSourceSpans(
+        IEnumerable<DecompilerSequencePoint> sequencePoints,
+        string? typeName,
+        string? methodName)
+    {
+        return sequencePoints
+            .Where(point =>
+                !point.IsHidden &&
+                point.StartLine > 0 &&
+                point.EndLine >= point.StartLine)
+            .Select(point => new SourceSpanEntry
+            {
+                TypeName = typeName,
+                MethodName = methodName,
+                IlStartOffset = point.Offset,
+                IlEndOffset = point.EndOffset,
+                StartLine = point.StartLine,
+                EndLine = point.EndLine,
+            })
+            .ToList();
     }
 
     // Matches compiler-generated type simple names: <MethodName>d__0 (async),

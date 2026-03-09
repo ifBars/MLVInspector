@@ -49,6 +49,8 @@ pub struct DecompileParams {
     pub type_name: Option<String>,
     /// Method name within the type. `None` = decompile whole type.
     pub method_name: Option<String>,
+    /// Decompiler profile. Supported values: `readable`, `analysis`.
+    pub profile: Option<String>,
 }
 
 /// Empty params for methods that don't need any.
@@ -226,4 +228,19 @@ pub struct DecompilePayload {
     pub method_name: Option<String>,
     /// The reconstructed C# source code.
     pub csharp_source: String,
+    #[serde(default)]
+    pub profile: String,
+    #[serde(default)]
+    pub source_spans: Vec<DecompileSourceSpan>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DecompileSourceSpan {
+    pub type_name: Option<String>,
+    pub method_name: Option<String>,
+    pub il_start_offset: i32,
+    pub il_end_offset: i32,
+    pub start_line: usize,
+    pub end_line: usize,
 }

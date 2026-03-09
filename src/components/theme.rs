@@ -178,6 +178,7 @@ pub fn global_css() -> String {
             width: 100%;
             display: flex;
             align-items: center;
+            justify-content: space-between;
             gap: 10px;
             padding: 10px 12px;
             border: 1px solid #2d3138;
@@ -202,6 +203,74 @@ pub fn global_css() -> String {
             color: #7d828d;
             font-size: 10px;
             font-family: {font_mono};
+        }}
+        .shortcut-badge {{
+            flex-shrink: 0;
+            border: 1px solid #3b4048;
+            border-radius: 999px;
+            padding: 4px 8px;
+            background: #101113;
+            color: #b4b8c0;
+            font-size: 10px;
+            font-family: {font_mono};
+            white-space: nowrap;
+        }}
+        .shortcut-badge-live {{
+            border-color: #5a606a;
+            background: rgba(245,245,245,0.08);
+            color: #f5f5f5;
+        }}
+        .settings-overlay {{
+            width: min(860px, 100%);
+        }}
+        .settings-header {{
+            justify-content: space-between;
+        }}
+        .settings-results {{
+            gap: 8px;
+        }}
+        .settings-row {{
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 16px;
+            padding: 12px;
+            border: 1px solid #2d3138;
+            border-radius: 12px;
+            background: rgba(255,255,255,0.02);
+        }}
+        .settings-row-actions {{
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+            gap: 8px;
+            flex-wrap: wrap;
+        }}
+        .shortcut-capture {{
+            min-width: 76px;
+            text-align: center;
+        }}
+        .shortcut-capture.active {{
+            border-color: #5a606a;
+            background: rgba(245,245,245,0.08);
+            color: #f5f5f5;
+        }}
+
+        @media (max-width: 920px) {{
+            .settings-header,
+            .settings-row {{
+                flex-direction: column;
+                align-items: stretch;
+            }}
+
+            .settings-row-actions {{
+                justify-content: flex-start;
+            }}
+
+            .command-palette-footer {{
+                flex-direction: column;
+                align-items: flex-start;
+            }}
         }}
 
         .il-tabs {{
@@ -405,6 +474,42 @@ pub fn global_css() -> String {
         }}
         .il-row.highlighted {{
             background: rgba(100, 180, 255, 0.12);
+        }}
+
+        .csharp-source {{
+            white-space: pre-wrap;
+            word-break: break-word;
+            tab-size: 4;
+            font-variant-ligatures: none;
+        }}
+        .csharp-line {{
+            display: block;
+            border-radius: 4px;
+            padding: 0 4px;
+        }}
+        .csharp-line.highlighted {{
+            background: rgba(100, 180, 255, 0.12);
+        }}
+        .csharp-token.keyword {{
+            color: #7fc4ff;
+        }}
+        .csharp-token.type {{
+            color: #8fd2c5;
+        }}
+        .csharp-token.string {{
+            color: #d7c38a;
+        }}
+        .csharp-token.comment {{
+            color: #6f8b73;
+        }}
+        .csharp-token.number {{
+            color: #d9a77a;
+        }}
+        .csharp-token.preprocessor {{
+            color: #b89ef0;
+        }}
+        .csharp-token.attribute {{
+            color: #c7abda;
         }}
 
         .empty-state {{

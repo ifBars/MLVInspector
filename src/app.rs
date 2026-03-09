@@ -4,9 +4,15 @@ use dioxus_desktop::tao::event::{Event, WindowEvent};
 use dioxus_desktop::use_wry_event_handler;
 
 use crate::components::{
-    clamp_panel_width, extract_findings, global_css, run_analysis, ActiveResize, CommandPalette,
-    ExplorerPanel, FindingsPanel, IlTab, IlViewPanel, ResizeTarget, StatusBar, TitleBar,
+    clamp_panel_width, dispatch_shortcut_binding, extract_findings, global_css, run_analysis,
+    ActiveResize, CommandContext, CommandId, CommandPalette, ExplorerPanel, FindingsPanel,
+    IlTab, IlViewPanel, OverlayKind, ResizeTarget, SettingsOverlay, StatusBar, TitleBar,
     C_ACCENT_BLUE, C_BG_BASE, C_TEXT_PRIMARY, FONT_SANS,
+};
+use crate::services::settings::{load_shortcut_settings, save_shortcut_settings};
+use crate::shortcuts::{
+    binding_from_shortcut_event_payload, ShortcutKey, ShortcutKeyEventPayload,
+    ShortcutSettings, APP_SHORTCUT_LISTENER_SCRIPT,
 };
 use crate::state::AppState;
 
@@ -19,11 +25,19 @@ pub fn App() -> Element {
     // Shared cross-panel signals
     let mut open_tabs = use_signal(Vec::<IlTab>::new);
     let mut active_tab_id = use_signal(|| None::<String>);
-    let selected_finding = use_signal(|| None::<usize>);
+    let mut selected_finding = use_signal(|| None::<usize>);
     let mut last_error = use_signal(String::new);
-    let show_command_palette = use_signal(|| false);
+    let active_overlay = use_signal(|| None::<OverlayKind>);
     let show_scan_panel = use_signal(|| true);
-    let mut highlighted_il_offset = use_signal(|| None::<i64>);
+    let shortcut_settings = use_signal(|| {
+        load_shortcut_settings()
+            .map(ShortcutSettings::merged_with_defaults)
+            .unwrap_or_else(|err| {
+                tracing::warn!(error = %err, "failed to load shortcut settings; using defaults");
+                ShortcutSettings::with_defaults()
+            })
+    });
+    let mut editing_command = use_signal(|| None::<CommandId>);
 
     // Drag-and-drop state (App-local)
     let mut drag_counter = use_signal(|| 0i32);
@@ -33,6 +47,59 @@ pub fn App() -> Element {
     let mut explorer_width = use_signal(|| 320.0f64);
     let mut findings_width = use_signal(|| 300.0f64);
     let mut active_resize = use_signal(|| None::<ActiveResize>);
+
+    use_effect(move || {
+        let settings = shortcut_settings();
+        if let Err(err) = save_shortcut_settings(&settings) {
+            tracing::warn!(error = %err, "failed to save shortcut settings");
+        }
+    });
+
+    use_hook(move || {
+        spawn(async move {
+            let mut eval = document::eval(APP_SHORTCUT_LISTENER_SCRIPT);
+
+            loop {
+                let payload: ShortcutKeyEventPayload = match eval.recv().await {
+                    Ok(payload) => payload,
+                    Err(err) => {
+                        tracing::warn!(error = %err, "shortcut listener stopped");
+                        break;
+                    }
+                };
+
+                if payload.repeat {
+                    continue;
+                }
+
+                if active_overlay() == Some(OverlayKind::Settings) && editing_command().is_some() {
+                    continue;
+                }
+
+                let Some(binding) = binding_from_shortcut_event_payload(&payload) else {
+                    continue;
+                };
+
+                if payload.is_editable_target() && !matches!(binding.key, ShortcutKey::Escape) {
+                    continue;
+                }
+
+                dispatch_shortcut_binding(
+                    CommandContext {
+                        state,
+                        active_overlay,
+                        show_scan_panel,
+                        last_error,
+                        open_tabs,
+                        active_tab_id,
+                        selected_finding,
+                    },
+                    &shortcut_settings(),
+                    &binding,
+                );
+            }
+        });
+    });
 
     // Load rules on startup
     use_hook(move || {
@@ -88,13 +155,23 @@ pub fn App() -> Element {
             state.open_assembly(file_path.clone());
             open_tabs.write().clear();
             active_tab_id.set(None);
-            highlighted_il_offset.set(None);
+            selected_finding.set(None);
 
             if let Some(assembly_id) = state.selected_id.read().clone() {
                 run_analysis(state, last_error, assembly_id, file_path);
             }
         }
         Event::WindowEvent { .. } => {}
+        _ => {}
+    });
+
+    let _keyboard_handler = use_wry_event_handler(move |event, _| match event {
+        Event::WindowEvent {
+            event: WindowEvent::Focused(false),
+            ..
+        } => {
+            editing_command.set(None);
+        }
         _ => {}
     });
 
@@ -176,7 +253,7 @@ pub fn App() -> Element {
                     state.open_assembly(file_path.clone());
                     open_tabs.write().clear();
                     active_tab_id.set(None);
-                    highlighted_il_offset.set(None);
+                    selected_finding.set(None);
 
                     if let Some(assembly_id) = state.selected_id.read().clone() {
                         run_analysis(state, last_error, assembly_id, file_path);
@@ -219,21 +296,28 @@ pub fn App() -> Element {
 
             // ── Title bar ──────────────────────────────────────────────────────
             TitleBar {
-                show_command_palette,
+                active_overlay,
                 show_scan_panel,
                 last_error,
                 open_tabs,
                 active_tab_id,
-                highlighted_il_offset,
+                selected_finding,
             }
 
             CommandPalette {
-                is_open: show_command_palette,
+                active_overlay,
+                shortcut_settings,
                 show_scan_panel,
                 last_error,
                 open_tabs,
                 active_tab_id,
-                highlighted_il_offset,
+                selected_finding,
+            }
+
+            SettingsOverlay {
+                active_overlay,
+                shortcut_settings,
+                editing_command,
             }
 
             // ── Three-panel workspace ──────────────────────────────────────────
@@ -269,7 +353,7 @@ pub fn App() -> Element {
                     sidebar_width: explorer_width(),
                     open_tabs,
                     active_tab_id,
-                    highlighted_il_offset,
+                    selected_finding,
                 }
 
                 // Resize handle: explorer ↔ IL view
@@ -293,7 +377,7 @@ pub fn App() -> Element {
                 IlViewPanel {
                     open_tabs,
                     active_tab_id,
-                    highlighted_il_offset,
+                    selected_finding,
                 }
 
                 // Panel 3: Findings (optional)
@@ -319,7 +403,6 @@ pub fn App() -> Element {
                         findings_width: findings_width(),
                         open_tabs,
                         active_tab_id,
-                        highlighted_il_offset,
                         selected_finding,
                     }
                 }

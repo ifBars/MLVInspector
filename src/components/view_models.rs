@@ -18,7 +18,7 @@ pub struct UiInstruction {
     pub operand: String,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct UiFinding {
     pub rule_id: String,
     pub severity: String,
@@ -26,6 +26,22 @@ pub struct UiFinding {
     pub description: String,
     pub code_snippet: String,
     pub il_offset: Option<i64>,
+    pub navigation: Option<UiFindingNavigation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UiFindingNavigation {
+    pub primary_type_name: String,
+    pub primary_method_name: String,
+    pub method_spans: Vec<UiFindingMethodSpan>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UiFindingMethodSpan {
+    pub type_name: String,
+    pub method_name: String,
+    pub il_offsets: Vec<i64>,
+    pub csharp_snippets: Vec<String>,
 }
 
 #[derive(Clone, PartialEq)]

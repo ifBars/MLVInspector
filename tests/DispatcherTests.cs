@@ -1,4 +1,5 @@
 using ILInspector.Worker;
+using Xunit;
 
 namespace MLVInspector.Tests;
 
@@ -148,5 +149,32 @@ public class DispatcherTests
         parentType.Methods.Add(method);
 
         Assert.Null(Dispatcher.FindStateMachineOwner(smType));
+    }
+
+    [Fact]
+    public void Decompile_ReturnsReadableProfileAndMethodSourceSpans()
+    {
+        using var cache = new AssemblyCache();
+        var dispatcher = new Dispatcher(cache);
+        var assemblyPath = typeof(DispatcherTests).Assembly.Location;
+
+        var payload = dispatcher.Decompile(new DecompileParams
+        {
+            Assembly = assemblyPath,
+            TypeName = "MLVInspector.Tests.DispatcherTests",
+            MethodName = nameof(BuildTypeWiseReconstruction_ReturnsNoTypesMessageWhenEmpty),
+            Profile = "readable",
+        });
+
+        Assert.Equal("readable", payload.Profile);
+        Assert.NotEmpty(payload.CsharpSource);
+        Assert.NotEmpty(payload.SourceSpans);
+        Assert.All(payload.SourceSpans, span =>
+        {
+            Assert.Equal("MLVInspector.Tests.DispatcherTests", span.TypeName);
+            Assert.Equal(nameof(BuildTypeWiseReconstruction_ReturnsNoTypesMessageWhenEmpty), span.MethodName);
+            Assert.True(span.StartLine > 0);
+            Assert.True(span.EndLine >= span.StartLine);
+        });
     }
 }

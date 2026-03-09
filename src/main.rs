@@ -10,6 +10,7 @@ mod components;
 mod error;
 mod ipc;
 mod services;
+mod shortcuts;
 mod state;
 mod types;
 

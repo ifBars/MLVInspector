@@ -29,4 +29,16 @@
     </AssemblyAttribute>
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="test-mods\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Remove="test-mods\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Remove="test-mods\**" />
+  </ItemGroup>
+
 </Project>

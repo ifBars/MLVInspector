@@ -3,6 +3,7 @@
 
 /MLVInspector.Worker/bin/
 /MLVInspector.Worker/obj/
+/MLVInspector.Worker/test-mods/
 
 **/bin/
 **/obj/
@@ -17,5 +18,5 @@ Thumbs.db
 .agent
 .agents
 .claude
-#AGENTS.md
+AGENTS.md
 skills-lock.json

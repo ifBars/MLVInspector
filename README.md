@@ -1,6 +1,6 @@
 # MLVInspector
 
-`MLVInspector` is a Rust + Dioxus desktop application for inspecting .NET assemblies.
+`MLVInspector` is a **Windows-only** Rust + Dioxus desktop application for inspecting .NET assemblies. No Mac, Linux, or web support is planned.
 
 Think of it as a lightweight `dnSpy` / `ILSpy` style workflow focused on:
 
@@ -63,12 +63,11 @@ Before building locally, install:
 - Rust toolchain
 - .NET SDK 8+
 - Dioxus CLI on `PATH` for `dx` commands
-- Windows environment support for the current desktop setup
+- Windows 10/11
 
 Notes:
 
 - `WorkerConfig::default()` prefers env vars plus repo-relative discovery
-- the current implementation is still Windows-oriented in a few places
 - the worker currently targets `MLVScan.Core` from NuGet by default
 
 ## Build From Source
@@ -139,5 +138,3 @@ dx serve --platform desktop
 - feature scope is still much smaller than `dnSpy` / `ILSpy`
 - test coverage is still limited
 - worker discovery is improved, but local build output still matters
-- desktop behavior is currently Windows-oriented
-- some placeholder architecture exists for future modes beyond the main explore + scan flow
