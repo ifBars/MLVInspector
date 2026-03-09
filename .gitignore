@@ -4,6 +4,7 @@
 /MLVInspector.Worker/bin/
 /MLVInspector.Worker/obj/
 /MLVInspector.Worker/test-mods/
+/worker-publish/
 
 **/bin/
 **/obj/
