@@ -113,10 +113,42 @@ pub fn group_methods_by_namespace(methods: &[UiMethod]) -> Vec<UiNamespaceGroup>
         .collect()
 }
 
+pub fn resolve_finding_target(
+    methods: &[UiMethod],
+    finding: &UiFinding,
+) -> Option<(String, String)> {
+    if let Some(navigation) = finding.navigation.as_ref() {
+        for span in &navigation.method_spans {
+            if let Some(resolved) =
+                resolve_method_reference(methods, &span.type_name, &span.method_name)
+            {
+                return Some(resolved);
+            }
+        }
+
+        if let Some(resolved) = resolve_method_reference(
+            methods,
+            &navigation.primary_type_name,
+            &navigation.primary_method_name,
+        ) {
+            return Some(resolved);
+        }
+    }
+
+    parse_method_location(&finding.location).and_then(|(type_name, method_name)| {
+        resolve_method_reference(methods, &type_name, &method_name)
+    })
+}
+
 // Tab ID helpers
 
 pub fn type_tab_id(type_name: &str) -> String {
     format!("type::{type_name}")
+}
+
+pub fn should_retry_decompile_source(source: &str) -> bool {
+    source.contains("Could not find type definition System.Net.WebClient")
+        || source.contains("Handle with invalid row number")
 }
 
 pub fn method_tab_id(type_name: &str, method_name: &str) -> String {
@@ -590,10 +622,11 @@ fn search_lines_match(source_line: &str, snippet_line: &str) -> bool {
 mod tests {
     use super::{
         highlighted_csharp_lines, highlighted_csharp_lines_from_source_spans,
-        parse_il_offset_from_snippet, parse_il_offsets_from_snippet, resolve_method_reference,
+        parse_il_offset_from_snippet, parse_il_offsets_from_snippet, resolve_finding_target,
+        resolve_method_reference, should_retry_decompile_source,
     };
     use crate::{
-        components::view_models::{UiFindingMethodSpan, UiMethod},
+        components::view_models::{UiFinding, UiFindingMethodSpan, UiFindingNavigation, UiMethod},
         ipc::DecompileSourceSpan,
     };
 
@@ -712,5 +745,52 @@ mod tests {
         assert!(!super::is_compiler_generated_type_name(
             "CustomerSearcher.Core"
         ));
+    }
+
+    #[test]
+    fn should_retry_decompile_source_detects_known_stale_errors() {
+        assert!(should_retry_decompile_source(
+            "// Decompilation error:\n// Handle with invalid row number."
+        ));
+        assert!(should_retry_decompile_source(
+            "// Decompilation error:\n// Could not find type definition System.Net.WebClient in type system."
+        ));
+        assert!(!should_retry_decompile_source("public class Core {}"));
+    }
+
+    #[test]
+    fn resolve_finding_target_prefers_in_assembly_method_over_external_navigation_target() {
+        let methods = vec![UiMethod {
+            type_name: "CustomerSearcher.Core".to_string(),
+            method_name: "DownloadRun".to_string(),
+            signature: String::new(),
+            instructions: Vec::new(),
+        }];
+        let finding = UiFinding {
+            rule_id: "MLV-TEST".to_string(),
+            severity: "High".to_string(),
+            location: "System.Net.WebClient::DownloadFileTaskAsync".to_string(),
+            description: String::new(),
+            code_snippet: String::new(),
+            il_offset: None,
+            navigation: Some(UiFindingNavigation {
+                primary_type_name: "System.Net.WebClient".to_string(),
+                primary_method_name: "DownloadFileTaskAsync".to_string(),
+                method_spans: vec![UiFindingMethodSpan {
+                    type_name: "CustomerSearcher.Core/<DownloadRun>d__2".to_string(),
+                    method_name: "MoveNext".to_string(),
+                    il_offsets: vec![],
+                    csharp_snippets: vec![],
+                }],
+            }),
+        };
+
+        assert_eq!(
+            resolve_finding_target(&methods, &finding),
+            Some((
+                "CustomerSearcher.Core".to_string(),
+                "DownloadRun".to_string()
+            ))
+        );
     }
 }

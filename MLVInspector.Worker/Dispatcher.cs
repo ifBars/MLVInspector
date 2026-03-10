@@ -199,6 +199,7 @@ internal sealed class Dispatcher
         var requestedMethodName = NormalizeRequestedName(p.MethodName);
         string source;
         var sourceSpans = new List<SourceSpanEntry>();
+        var assembly = _cache.Load(p.Assembly);
 
         try
         {
@@ -264,12 +265,12 @@ internal sealed class Dispatcher
         catch (Exception ex)
         {
             sourceSpans.Clear();
-            source = requestedTypeName == null
-                ? BuildTypeWiseReconstruction(
-                    EnumerateReconstructableTypeNames(_cache.Load(p.Assembly)),
-                    typeName => decompiler.DecompileTypeAsString(new FullTypeName(typeName)),
+                source = requestedTypeName == null
+                    ? BuildTypeWiseReconstruction(
+                    EnumerateReconstructableTypeNames(assembly),
+                    typeName => TryDecompileTypeWithFallback(assembly, decompiler, typeName),
                     ex)
-                : $"// Decompilation error:\n// {ex.Message}";
+                : BuildRequestedFallback(assembly, requestedTypeName, requestedMethodName, ex);
         }
 
         return new DecompilePayload
@@ -294,10 +295,12 @@ internal sealed class Dispatcher
     {
         var settings = CreateDecompilerSettings(profile);
 
+        var targetFramework = DetectTargetFrameworkWithFallback(assemblyPath);
+
         var resolver = new UniversalAssemblyResolver(
             assemblyPath,
             throwOnError: false,
-            targetFramework: null);
+            targetFramework: targetFramework);
 
         // Search the assembly's own directory first (catches sibling DLLs,
         // plugins shipped alongside the target, etc.).
@@ -305,7 +308,135 @@ internal sealed class Dispatcher
         if (!string.IsNullOrEmpty(dir))
             resolver.AddSearchDirectory(dir);
 
+        // Add reference assembly paths for .NET Framework
+        if (IsDotNetFrameworkTarget(targetFramework))
+        {
+            AddDotNetFrameworkReferencePaths(resolver);
+        }
+
         return new CSharpDecompiler(assemblyPath, resolver, settings);
+    }
+
+    private static string? DetectTargetFramework(string assemblyPath)
+    {
+        try
+        {
+            using var assembly = AssemblyDefinition.ReadAssembly(assemblyPath);
+            foreach (var attr in assembly.CustomAttributes)
+            {
+                if (attr.AttributeType.FullName == "System.Runtime.Versioning.TargetFrameworkAttribute")
+                {
+                    if (attr.ConstructorArguments.Count > 0 &&
+                        attr.ConstructorArguments[0].Value is string frameworkMoniker)
+                    {
+                        return frameworkMoniker;
+                    }
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
+    private static string? DetectTargetFrameworkWithFallback(string assemblyPath)
+    {
+        var detected = DetectTargetFramework(assemblyPath);
+        if (detected != null)
+            return detected;
+
+        return TryInferFromReferences(assemblyPath);
+    }
+
+    private static string? TryInferFromReferences(string assemblyPath)
+    {
+        var dir = Path.GetDirectoryName(assemblyPath);
+        if (string.IsNullOrEmpty(dir))
+            return null;
+
+        var dlls = Directory.GetFiles(dir, "*.dll");
+        foreach (var dll in dlls)
+        {
+            try
+            {
+                using var asm = AssemblyDefinition.ReadAssembly(dll);
+                foreach (var attr in asm.CustomAttributes)
+                {
+                    if (attr.AttributeType.FullName == "System.Runtime.Versioning.TargetFrameworkAttribute")
+                    {
+                        if (attr.ConstructorArguments.Count > 0 &&
+                            attr.ConstructorArguments[0].Value is string moniker)
+                        {
+                            return moniker;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return "netstandard2.1";
+    }
+
+    private static bool IsDotNetFrameworkTarget(string? moniker)
+    {
+        return !string.IsNullOrEmpty(moniker) &&
+            moniker.StartsWith(".NETFramework,Version=v", StringComparison.Ordinal);
+    }
+
+    private static void AddDotNetFrameworkReferencePaths(UniversalAssemblyResolver resolver)
+    {
+        var programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        var windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+
+        // Reference Assemblies (preferred)
+        var refAssembliesBase = Path.Combine(programFilesX86, "Reference Assemblies", "Microsoft", "Framework", ".NETFramework");
+        if (Directory.Exists(refAssembliesBase))
+        {
+            // Look for v4.x folders
+            foreach (var dir in Directory.GetDirectories(refAssembliesBase, "v4.*"))
+            {
+                resolver.AddSearchDirectory(dir);
+            }
+        }
+
+        // GAC paths
+        var gacPaths = new[]
+        {
+            Path.Combine(windows, "assembly", "GAC_MSIL"),
+            Path.Combine(windows, "assembly", "GAC_32"),
+            Path.Combine(windows, "assembly", "GAC_64"),
+            Path.Combine(windows, "Microsoft.NET", "assembly", "GAC_MSIL"),
+            Path.Combine(windows, "Microsoft.NET", "assembly", "GAC_32"),
+            Path.Combine(windows, "Microsoft.NET", "assembly", "GAC_64"),
+        };
+
+        foreach (var gacPath in gacPaths)
+        {
+            if (Directory.Exists(gacPath))
+            {
+                resolver.AddSearchDirectory(gacPath);
+            }
+        }
+
+        // .NET Framework runtime assemblies
+        var frameworkPaths = new[]
+        {
+            Path.Combine(windows, "Microsoft.NET", "Framework", "v4.0.30319"),
+            Path.Combine(windows, "Microsoft.NET", "Framework64", "v4.0.30319"),
+        };
+
+        foreach (var fwPath in frameworkPaths)
+        {
+            if (Directory.Exists(fwPath))
+            {
+                resolver.AddSearchDirectory(fwPath);
+            }
+        }
     }
 
     private static DecompilerSettings CreateDecompilerSettings(DecompileProfile profile)
@@ -548,6 +679,101 @@ internal sealed class Dispatcher
         }
 
         return string.Join("\n\n", blocks);
+    }
+
+    private static string TryDecompileTypeWithFallback(
+        AssemblyDefinition assembly,
+        CSharpDecompiler decompiler,
+        string reflectionTypeName)
+    {
+        try
+        {
+            return decompiler.DecompileTypeAsString(new FullTypeName(reflectionTypeName));
+        }
+        catch (Exception ex)
+        {
+            var type = FindTypeDefinition(assembly, reflectionTypeName);
+            return type != null
+                ? RenderTypeFallback(type, null, ex)
+                : $"// Failed to decompile {reflectionTypeName}: {ex.Message}";
+        }
+    }
+
+    private static string BuildRequestedFallback(
+        AssemblyDefinition assembly,
+        string requestedTypeName,
+        string? requestedMethodName,
+        Exception error)
+    {
+        var type = FindTypeDefinition(assembly, requestedTypeName);
+        if (type == null)
+        {
+            return $"// Decompilation error:\n// {error.Message}";
+        }
+
+        return RenderTypeFallback(type, requestedMethodName, error);
+    }
+
+    private static TypeDefinition? FindTypeDefinition(AssemblyDefinition assembly, string typeName)
+    {
+        foreach (var module in assembly.Modules)
+        {
+            foreach (var type in EnumerateTypes(module))
+            {
+                if (string.Equals(type.FullName, typeName, StringComparison.Ordinal) ||
+                    string.Equals(type.FullName.Replace('/', '+'), typeName, StringComparison.Ordinal))
+                {
+                    return type;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static string RenderTypeFallback(
+        TypeDefinition type,
+        string? requestedMethodName,
+        Exception error)
+    {
+        var lines = new List<string>
+        {
+            $"// Decompiler fallback for {type.FullName}",
+            $"// Original decompilation failed: {error.Message}",
+            $"// Namespace: {type.Namespace}",
+            $"// Type: {type.Name}",
+            ""
+        };
+
+        IEnumerable<MethodDefinition> methods = requestedMethodName == null
+            ? type.Methods
+            : type.Methods.Where(method => string.Equals(method.Name, requestedMethodName, StringComparison.Ordinal)).ToList();
+
+        foreach (var method in methods)
+        {
+            lines.Add($"// Method: {FormatSignature(method)}");
+
+            if (!method.HasBody)
+            {
+                lines.Add("// <no body>");
+                lines.Add(string.Empty);
+                continue;
+            }
+
+            foreach (var instruction in method.Body.Instructions)
+            {
+                lines.Add($"// IL_{instruction.Offset:X4}: {instruction.OpCode} {FormatOperand(instruction.Operand)}".TrimEnd());
+            }
+
+            lines.Add(string.Empty);
+        }
+
+        if (requestedMethodName != null && !methods.Any())
+        {
+            lines.Add($"// Method not found: {requestedMethodName}");
+        }
+
+        return string.Join("\n", lines);
     }
 
     public List<RuleEntry> ListRules()

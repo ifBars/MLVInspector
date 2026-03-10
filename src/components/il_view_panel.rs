@@ -10,7 +10,7 @@ use super::csharp_highlight::highlight_csharp;
 use super::helpers::{
     extract_findings, extract_methods, highlighted_csharp_lines,
     highlighted_csharp_lines_from_source_spans, is_compiler_generated_type_name, method_tab_id,
-    resolve_method_reference,
+    resolve_method_reference, should_retry_decompile_source,
 };
 use super::theme::{
     C_ACCENT_BLUE, C_ACCENT_GREEN, C_BG_BASE, C_BG_ELEVATED, C_BG_SURFACE, C_BORDER, C_TEXT_MUTED,
@@ -69,7 +69,13 @@ pub fn IlViewPanel(
             DECOMPILE_PROFILE
         );
 
-        if csharp_cache.read().contains_key(&cache_key) {
+        let should_fetch = csharp_cache
+            .read()
+            .get(&cache_key)
+            .map(|payload| should_retry_decompile_source(&payload.csharp_source))
+            .unwrap_or(true);
+
+        if !should_fetch {
             return;
         }
 

@@ -4,8 +4,7 @@ use dioxus::prelude::*;
 use crate::state::AppState;
 
 use super::helpers::{
-    extract_findings, extract_methods, method_tab_id, parse_method_location,
-    resolve_method_reference, severity_color,
+    extract_findings, extract_methods, method_tab_id, resolve_finding_target, severity_color,
 };
 use super::theme::{
     C_ACCENT_AMBER, C_BG_ELEVATED, C_BG_SURFACE, C_BORDER, C_BORDER_ACCENT, C_TEXT_MUTED,
@@ -107,30 +106,7 @@ pub fn FindingsPanel(
                                 let finding_rule_id = finding.rule_id.clone();
                                 let finding_location = finding.location.clone();
                                 let navigation = finding.navigation.clone();
-                                let fallback_location = parse_method_location(&finding.location);
-                                let resolved_method = navigation
-                                    .as_ref()
-                                    .and_then(|navigation| {
-                                        resolve_method_reference(
-                                            &methods,
-                                            &navigation.primary_type_name,
-                                            &navigation.primary_method_name,
-                                        )
-                                    })
-                                    .or_else(|| {
-                                        fallback_location.as_ref().and_then(|(type_name, method_name)| {
-                                            resolve_method_reference(&methods, type_name, method_name)
-                                        })
-                                    })
-                                    .or_else(|| fallback_location.clone())
-                                    .or_else(|| {
-                                        navigation.as_ref().map(|navigation| {
-                                            (
-                                                navigation.primary_type_name.clone(),
-                                                navigation.primary_method_name.clone(),
-                                            )
-                                        })
-                                    });
+                                let resolved_method = resolve_finding_target(&methods, finding);
                                 rsx! {
                                     button {
                                         key: "{index}-{finding.rule_id}",

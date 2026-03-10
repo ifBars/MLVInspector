@@ -208,6 +208,15 @@ impl WorkerClient {
             .map_err(|e| AppError::Parse(format!("failed to deserialize worker payload: {e}")))
     }
 
+    async fn restart(&self) {
+        let mut guard = self.inner.lock().await;
+        if let Some(mut state) = guard.state.take() {
+            if let Err(err) = state._child.start_kill() {
+                warn!(error = %err, "failed to kill stale worker process");
+            }
+        }
+    }
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     pub async fn explore(&self, params: ExploreParams) -> Result<ExplorePayload, AppError> {
@@ -223,6 +232,18 @@ impl WorkerClient {
     }
 
     pub async fn decompile(&self, params: DecompileParams) -> Result<DecompilePayload, AppError> {
-        self.call("decompile", params).await
+        let payload: DecompilePayload = self.call("decompile", params.clone()).await?;
+        if needs_worker_retry(&payload.csharp_source) {
+            warn!("decompile returned stale worker error, restarting worker and retrying");
+            self.restart().await;
+            return self.call("decompile", params).await;
+        }
+
+        Ok(payload)
     }
+}
+
+fn needs_worker_retry(source: &str) -> bool {
+    source.contains("Could not find type definition System.Net.WebClient")
+        || source.contains("Handle with invalid row number")
 }

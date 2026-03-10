@@ -41,7 +41,7 @@ pub struct ScanParams {
     pub show_clean: bool,
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize, Default, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DecompileParams {
     pub assembly: String,
