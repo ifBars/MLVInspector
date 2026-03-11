@@ -1,0 +1,58 @@
+name: Update MLVScan.Core
+
+on:
+  schedule:
+    - cron: '0 */8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-core-package:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Update MLVScan.Core package reference
+        id: update
+        run: |
+          FILE="MLVInspector.Worker/ILInspector.Worker.csproj"
+          BEFORE=$(grep -oP 'PackageReference Include="MLVScan.Core" Version="\K[^"]+' "$FILE" || true)
+
+          dotnet add "$FILE" package MLVScan.Core --prerelease
+
+          AFTER=$(grep -oP 'PackageReference Include="MLVScan.Core" Version="\K[^"]+' "$FILE" || true)
+
+          echo "before=$BEFORE" >> "$GITHUB_OUTPUT"
+          echo "after=$AFTER" >> "$GITHUB_OUTPUT"
+
+          if [ "$BEFORE" != "$AFTER" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create pull request
+        if: steps.update.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore(worker): update MLVScan.Core to ${{ steps.update.outputs.after }}"
+          title: "chore(worker): update MLVScan.Core to ${{ steps.update.outputs.after }}"
+          body: |
+            ## Summary
+            - Updates `MLVScan.Core` in `MLVInspector.Worker/ILInspector.Worker.csproj`
+            - Previous version: `${{ steps.update.outputs.before }}`
+            - New version: `${{ steps.update.outputs.after }}`
+
+            This PR was created automatically by the scheduled package update workflow.
+          branch: chore/update-mlvscan-core
+          delete-branch: true
