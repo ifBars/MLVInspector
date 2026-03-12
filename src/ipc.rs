@@ -244,3 +244,71 @@ pub struct DecompileSourceSpan {
     pub start_line: usize,
     pub end_line: usize,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DecompilePayload, ExplorePayload, NoParams, ScanParams, WorkerRequest, WorkerResponse,
+    };
+
+    #[test]
+    fn worker_request_serializes_camel_case_scan_params() {
+        let request = WorkerRequest {
+            id: 9,
+            method: "scan",
+            params: ScanParams {
+                assembly: "sample.dll".to_string(),
+                show_clean: true,
+                ..Default::default()
+            },
+        };
+
+        let json = serde_json::to_value(&request).expect("request should serialize");
+
+        assert_eq!(json["id"], 9);
+        assert_eq!(json["method"], "scan");
+        assert_eq!(json["params"]["assembly"], "sample.dll");
+        assert_eq!(json["params"]["showClean"], true);
+    }
+
+    #[test]
+    fn explore_payload_deserializes_missing_types_as_empty() {
+        let payload: ExplorePayload =
+            serde_json::from_str(r#"{"assemblyPath":"sample.dll","methods":[]}"#)
+                .expect("payload should deserialize");
+
+        assert_eq!(payload.assembly_path, "sample.dll");
+        assert!(payload.methods.is_empty());
+        assert!(payload.types.is_empty());
+    }
+
+    #[test]
+    fn decompile_payload_deserializes_default_profile_and_source_spans() {
+        let payload: DecompilePayload = serde_json::from_str(
+            r#"{"assemblyPath":"sample.dll","typeName":null,"methodName":null,"csharpSource":"class Demo {}"}"#,
+        )
+        .expect("payload should deserialize");
+
+        assert_eq!(payload.profile, "");
+        assert!(payload.source_spans.is_empty());
+        assert_eq!(payload.csharp_source, "class Demo {}");
+    }
+
+    #[test]
+    fn worker_response_deserializes_error_without_payload() {
+        let response: WorkerResponse =
+            serde_json::from_str(r#"{"id":7,"ok":false,"payload":null,"error":"boom"}"#)
+                .expect("response should deserialize");
+
+        assert_eq!(response.id, 7);
+        assert!(!response.ok);
+        assert!(response.payload.is_none());
+        assert_eq!(response.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn empty_params_serializes_as_empty_object() {
+        let json = serde_json::to_string(&NoParams {}).expect("empty params should serialize");
+        assert_eq!(json, "{}");
+    }
+}

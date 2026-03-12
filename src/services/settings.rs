@@ -51,3 +51,13 @@ fn config_root_dir() -> io::Result<PathBuf> {
         "Could not determine config directory for shortcut settings",
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::SHORTCUTS_FILE_NAME;
+
+    #[test]
+    fn shortcuts_file_name_constant_matches_expected_file() {
+        assert_eq!(SHORTCUTS_FILE_NAME, "shortcuts.json");
+    }
+}

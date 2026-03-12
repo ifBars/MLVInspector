@@ -110,6 +110,42 @@ Then open an assembly by:
 - dragging a file into the window
 - using the toolbar file picker
 
+## Test And Coverage
+
+Quick validation:
+
+```bash
+cargo test
+dotnet test MLVInspector.Worker.Tests.csproj
+```
+
+Generate coverage reports for both the Rust desktop app and the .NET worker:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-coverage.ps1
+```
+
+The script writes reports to:
+
+- `coverage/rust/html/index.html`
+- `coverage/rust/cobertura.xml`
+- `coverage/dotnet/report/index.html`
+- `coverage/dotnet/report/Summary.txt`
+
+Tooling notes:
+
+- Rust coverage uses `cargo-llvm-cov`; install it once with `cargo install cargo-llvm-cov --locked` and `rustup component add llvm-tools-preview`
+- .NET coverage uses `coverlet.collector` plus `reportgenerator`
+- `coverage.runsettings` keeps the worker report focused on `ILInspector.Worker` instead of the test assembly
+
+Recommended coverage loop:
+
+- generate a baseline report
+- target pure helpers and protocol/service boundaries first
+- rerun focused tests after each batch
+- use the HTML report hotspots to decide the next extraction or test target
+- keep Dioxus-heavy UI files covered indirectly through extracted helpers and smoke checks
+
 ## Worker Discovery
 
 The desktop app looks for the worker in this order:
