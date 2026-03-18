@@ -118,10 +118,7 @@ pub fn IlViewPanel(
     let methods = if let Some(ref id) = selected_id {
         let explore_key = format!("{id}::explore");
         state
-            .get_analysis_entry(&explore_key)
-            .as_ref()
-            .and_then(|e| e.result.as_ref())
-            .map(extract_methods)
+            .with_analysis_result(&explore_key, extract_methods)
             .unwrap_or_default()
     } else {
         Vec::new()
@@ -129,10 +126,7 @@ pub fn IlViewPanel(
     let findings = if let Some(ref id) = selected_id {
         let scan_key = format!("{id}::scan");
         state
-            .get_analysis_entry(&scan_key)
-            .as_ref()
-            .and_then(|e| e.result.as_ref())
-            .map(extract_findings)
+            .with_analysis_result(&scan_key, extract_findings)
             .unwrap_or_default()
     } else {
         Vec::new()

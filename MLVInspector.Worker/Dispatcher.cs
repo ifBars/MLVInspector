@@ -354,7 +354,7 @@ internal sealed class Dispatcher
             Version = assemblyName.Version?.ToString(),
             Culture = NullIfEmpty(assemblyName.Culture),
             PublicKeyToken = FormatPublicKeyToken(assemblyName.PublicKeyToken),
-            TargetFramework = DetectTargetFrameworkFromAssembly(assembly),
+            TargetFramework = DetectTargetFrameworkFromAssembly(assembly) ?? TryInferFromReferences(assemblyPath),
             RuntimeVersion = NullIfEmpty(mainModule.RuntimeVersion),
             Architecture = mainModule.Architecture.ToString(),
             ModuleKind = mainModule.Kind.ToString(),
@@ -380,7 +380,7 @@ internal sealed class Dispatcher
         };
     }
 
-    private static AssemblyReferenceEntry MapAssemblyReference(AssemblyNameReference reference)
+    private static AssemblyReferenceEntry MapAssemblyReference(Mono.Cecil.AssemblyNameReference reference)
     {
         return new AssemblyReferenceEntry
         {
@@ -392,13 +392,10 @@ internal sealed class Dispatcher
         };
     }
 
-    private static ResourceMetadataEntry MapResource(Resource resource)
+    private static ResourceMetadataEntry MapResource(Mono.Cecil.Resource resource)
     {
-        long? sizeBytes = resource switch
-        {
-            EmbeddedResource embedded => embedded.GetResourceData().Length,
-            _ => null,
-        };
+        // Avoid materializing embedded resource contents during Explore().
+        long? sizeBytes = null;
 
         var implementation = resource switch
         {

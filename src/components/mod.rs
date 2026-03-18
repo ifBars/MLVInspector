@@ -15,6 +15,7 @@ pub mod analysis;
 pub mod command_palette;
 pub mod commands;
 pub mod csharp_highlight;
+mod explorer_metadata;
 pub mod explorer_panel;
 pub mod explorer_tools;
 pub mod findings_panel;

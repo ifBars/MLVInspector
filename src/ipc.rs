@@ -81,7 +81,7 @@ pub struct ExplorePayload {
     pub types: Vec<TypeEntry>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssemblyMetadataEntry {
     pub assembly_name: String,
@@ -105,7 +105,7 @@ pub struct AssemblyMetadataEntry {
     pub custom_attributes: Vec<AttributeMetadataEntry>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModuleMetadataEntry {
     pub name: String,
@@ -116,7 +116,7 @@ pub struct ModuleMetadataEntry {
     pub file_name: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssemblyReferenceEntry {
     pub name: String,
@@ -126,7 +126,7 @@ pub struct AssemblyReferenceEntry {
     pub public_key_token: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceMetadataEntry {
     pub name: String,
@@ -136,7 +136,7 @@ pub struct ResourceMetadataEntry {
     pub implementation: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttributeMetadataEntry {
     pub attribute_type: String,
