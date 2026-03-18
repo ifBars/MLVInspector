@@ -153,11 +153,128 @@ public sealed class ExplorePayload
     [JsonPropertyName("assemblyPath")]
     public string AssemblyPath { get; set; } = "";
 
+    [JsonPropertyName("assemblyMetadata")]
+    public AssemblyMetadataEntry AssemblyMetadata { get; set; } = new();
+
     [JsonPropertyName("methods")]
     public List<MethodEntry> Methods { get; set; } = new();
 
     [JsonPropertyName("types")]
     public List<TypeEntry> Types { get; set; } = new();
+}
+
+public sealed class AssemblyMetadataEntry
+{
+    [JsonPropertyName("assemblyName")]
+    public string AssemblyName { get; set; } = "";
+
+    [JsonPropertyName("fullName")]
+    public string FullName { get; set; } = "";
+
+    [JsonPropertyName("version")]
+    public string? Version { get; set; }
+
+    [JsonPropertyName("culture")]
+    public string? Culture { get; set; }
+
+    [JsonPropertyName("publicKeyToken")]
+    public string? PublicKeyToken { get; set; }
+
+    [JsonPropertyName("targetFramework")]
+    public string? TargetFramework { get; set; }
+
+    [JsonPropertyName("runtimeVersion")]
+    public string? RuntimeVersion { get; set; }
+
+    [JsonPropertyName("architecture")]
+    public string? Architecture { get; set; }
+
+    [JsonPropertyName("moduleKind")]
+    public string? ModuleKind { get; set; }
+
+    [JsonPropertyName("entryPoint")]
+    public string? EntryPoint { get; set; }
+
+    [JsonPropertyName("mvid")]
+    public string? Mvid { get; set; }
+
+    [JsonPropertyName("modules")]
+    public List<ModuleMetadataEntry> Modules { get; set; } = new();
+
+    [JsonPropertyName("assemblyReferences")]
+    public List<AssemblyReferenceEntry> AssemblyReferences { get; set; } = new();
+
+    [JsonPropertyName("resources")]
+    public List<ResourceMetadataEntry> Resources { get; set; } = new();
+
+    [JsonPropertyName("customAttributes")]
+    public List<AttributeMetadataEntry> CustomAttributes { get; set; } = new();
+}
+
+public sealed class ModuleMetadataEntry
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("runtimeVersion")]
+    public string? RuntimeVersion { get; set; }
+
+    [JsonPropertyName("architecture")]
+    public string? Architecture { get; set; }
+
+    [JsonPropertyName("moduleKind")]
+    public string? ModuleKind { get; set; }
+
+    [JsonPropertyName("mvid")]
+    public string? Mvid { get; set; }
+
+    [JsonPropertyName("fileName")]
+    public string? FileName { get; set; }
+}
+
+public sealed class AssemblyReferenceEntry
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("fullName")]
+    public string FullName { get; set; } = "";
+
+    [JsonPropertyName("version")]
+    public string? Version { get; set; }
+
+    [JsonPropertyName("culture")]
+    public string? Culture { get; set; }
+
+    [JsonPropertyName("publicKeyToken")]
+    public string? PublicKeyToken { get; set; }
+}
+
+public sealed class ResourceMetadataEntry
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("resourceType")]
+    public string ResourceType { get; set; } = "";
+
+    [JsonPropertyName("attributes")]
+    public string? Attributes { get; set; }
+
+    [JsonPropertyName("sizeBytes")]
+    public long? SizeBytes { get; set; }
+
+    [JsonPropertyName("implementation")]
+    public string? Implementation { get; set; }
+}
+
+public sealed class AttributeMetadataEntry
+{
+    [JsonPropertyName("attributeType")]
+    public string AttributeType { get; set; } = "";
+
+    [JsonPropertyName("summary")]
+    public string? Summary { get; set; }
 }
 
 public sealed class TypeEntry

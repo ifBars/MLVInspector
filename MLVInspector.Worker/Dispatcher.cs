@@ -106,6 +106,7 @@ internal sealed class Dispatcher
         return new ExplorePayload
         {
             AssemblyPath = p.Assembly,
+            AssemblyMetadata = BuildAssemblyMetadata(assembly, p.Assembly),
             Methods = methods,
             Types = types,
         };
@@ -339,6 +340,167 @@ internal sealed class Dispatcher
         }
 
         return null;
+    }
+
+    private static AssemblyMetadataEntry BuildAssemblyMetadata(AssemblyDefinition assembly, string assemblyPath)
+    {
+        var assemblyName = assembly.Name;
+        var mainModule = assembly.MainModule;
+
+        return new AssemblyMetadataEntry
+        {
+            AssemblyName = assemblyName.Name ?? Path.GetFileNameWithoutExtension(assemblyPath),
+            FullName = assemblyName.FullName,
+            Version = assemblyName.Version?.ToString(),
+            Culture = NullIfEmpty(assemblyName.Culture),
+            PublicKeyToken = FormatPublicKeyToken(assemblyName.PublicKeyToken),
+            TargetFramework = DetectTargetFrameworkFromAssembly(assembly),
+            RuntimeVersion = NullIfEmpty(mainModule.RuntimeVersion),
+            Architecture = mainModule.Architecture.ToString(),
+            ModuleKind = mainModule.Kind.ToString(),
+            EntryPoint = assembly.EntryPoint?.FullName,
+            Mvid = mainModule.Mvid.ToString(),
+            Modules = assembly.Modules.Select(MapModule).ToList(),
+            AssemblyReferences = mainModule.AssemblyReferences.Select(MapAssemblyReference).ToList(),
+            Resources = mainModule.Resources.Select(MapResource).ToList(),
+            CustomAttributes = assembly.CustomAttributes.Select(MapAttribute).ToList(),
+        };
+    }
+
+    private static ModuleMetadataEntry MapModule(ModuleDefinition module)
+    {
+        return new ModuleMetadataEntry
+        {
+            Name = module.Name,
+            RuntimeVersion = NullIfEmpty(module.RuntimeVersion),
+            Architecture = module.Architecture.ToString(),
+            ModuleKind = module.Kind.ToString(),
+            Mvid = module.Mvid.ToString(),
+            FileName = NullIfEmpty(module.FileName),
+        };
+    }
+
+    private static AssemblyReferenceEntry MapAssemblyReference(AssemblyNameReference reference)
+    {
+        return new AssemblyReferenceEntry
+        {
+            Name = reference.Name,
+            FullName = reference.FullName,
+            Version = reference.Version?.ToString(),
+            Culture = NullIfEmpty(reference.Culture),
+            PublicKeyToken = FormatPublicKeyToken(reference.PublicKeyToken),
+        };
+    }
+
+    private static ResourceMetadataEntry MapResource(Resource resource)
+    {
+        long? sizeBytes = resource switch
+        {
+            EmbeddedResource embedded => embedded.GetResourceData().Length,
+            _ => null,
+        };
+
+        var implementation = resource switch
+        {
+            LinkedResource linked => linked.File,
+            AssemblyLinkedResource linkedAssembly => linkedAssembly.Assembly?.FullName,
+            _ => null,
+        };
+
+        return new ResourceMetadataEntry
+        {
+            Name = resource.Name,
+            ResourceType = resource.ResourceType.ToString(),
+            Attributes = resource.Attributes.ToString(),
+            SizeBytes = sizeBytes,
+            Implementation = NullIfEmpty(implementation),
+        };
+    }
+
+    private static AttributeMetadataEntry MapAttribute(CustomAttribute attribute)
+    {
+        return new AttributeMetadataEntry
+        {
+            AttributeType = attribute.AttributeType.FullName,
+            Summary = BuildAttributeSummary(attribute),
+        };
+    }
+
+    private static string? BuildAttributeSummary(CustomAttribute attribute)
+    {
+        var parts = new List<string>();
+
+        if (attribute.ConstructorArguments.Count > 0)
+        {
+            var ctorArgs = string.Join(", ", attribute.ConstructorArguments.Select(FormatAttributeArgument));
+            parts.Add($"ctor({ctorArgs})");
+        }
+
+        if (attribute.Properties.Count > 0)
+        {
+            var props = string.Join(", ", attribute.Properties.Select(p => $"{p.Name}={FormatAttributeValue(p.Argument.Value)}"));
+            parts.Add($"props({props})");
+        }
+
+        if (attribute.Fields.Count > 0)
+        {
+            var fields = string.Join(", ", attribute.Fields.Select(f => $"{f.Name}={FormatAttributeValue(f.Argument.Value)}"));
+            parts.Add($"fields({fields})");
+        }
+
+        if (parts.Count == 0)
+            return null;
+
+        var summary = string.Join("; ", parts);
+        return summary.Length > 240 ? $"{summary[..237]}..." : summary;
+    }
+
+    private static string FormatAttributeArgument(CustomAttributeArgument argument)
+    {
+        return FormatAttributeValue(argument.Value);
+    }
+
+    private static string FormatAttributeValue(object? value)
+    {
+        return value switch
+        {
+            null => "null",
+            string s when s.Length > 80 => $"\"{s[..77]}...\"",
+            string s => $"\"{s}\"",
+            CustomAttributeArgument nested => FormatAttributeArgument(nested),
+            CustomAttributeArgument[] array => $"[{string.Join(", ", array.Select(FormatAttributeArgument))}]",
+            IEnumerable<CustomAttributeArgument> enumerable => $"[{string.Join(", ", enumerable.Select(FormatAttributeArgument))}]",
+            TypeReference typeRef => typeRef.FullName,
+            _ => value.ToString() ?? string.Empty,
+        };
+    }
+
+    private static string? FormatPublicKeyToken(byte[]? token)
+    {
+        if (token == null || token.Length == 0)
+            return null;
+
+        return string.Concat(token.Select(b => b.ToString("x2")));
+    }
+
+    private static string? DetectTargetFrameworkFromAssembly(AssemblyDefinition assembly)
+    {
+        foreach (var attr in assembly.CustomAttributes)
+        {
+            if (attr.AttributeType.FullName == "System.Runtime.Versioning.TargetFrameworkAttribute" &&
+                attr.ConstructorArguments.Count > 0 &&
+                attr.ConstructorArguments[0].Value is string frameworkMoniker)
+            {
+                return frameworkMoniker;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? NullIfEmpty(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
     private static string? DetectTargetFrameworkWithFallback(string assemblyPath)

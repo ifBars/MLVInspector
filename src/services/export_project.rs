@@ -551,6 +551,7 @@ mod tests {
             mode: "combined".to_string(),
             explore: Some(ExplorePayload {
                 assembly_path: "C:/sample.dll".to_string(),
+                assembly_metadata: crate::ipc::AssemblyMetadataEntry::default(),
                 methods: vec![
                     sample_method("Example.Core.Entry", "Run"),
                     sample_method("Example.Core.Entry`1", "Handle"),
