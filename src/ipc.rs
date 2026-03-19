@@ -90,6 +90,7 @@ pub struct AssemblyMetadataEntry {
     pub culture: Option<String>,
     pub public_key_token: Option<String>,
     pub target_framework: Option<String>,
+    pub inferred_target_framework: Option<String>,
     pub runtime_version: Option<String>,
     pub architecture: Option<String>,
     pub module_kind: Option<String>,

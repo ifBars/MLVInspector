@@ -9,17 +9,22 @@ use super::theme::{
 };
 
 pub(crate) fn has_metadata(metadata: &AssemblyMetadataEntry) -> bool {
+    fn has_text(value: Option<&str>) -> bool {
+        value.is_some_and(|value| !value.trim().is_empty())
+    }
+
     !metadata.assembly_name.trim().is_empty()
         || !metadata.full_name.trim().is_empty()
-        || metadata.version.is_some()
-        || metadata.culture.is_some()
-        || metadata.public_key_token.is_some()
-        || metadata.target_framework.is_some()
-        || metadata.runtime_version.is_some()
-        || metadata.architecture.is_some()
-        || metadata.module_kind.is_some()
-        || metadata.entry_point.is_some()
-        || metadata.mvid.is_some()
+        || has_text(metadata.version.as_deref())
+        || has_text(metadata.culture.as_deref())
+        || has_text(metadata.public_key_token.as_deref())
+        || has_text(metadata.target_framework.as_deref())
+        || has_text(metadata.inferred_target_framework.as_deref())
+        || has_text(metadata.runtime_version.as_deref())
+        || has_text(metadata.architecture.as_deref())
+        || has_text(metadata.module_kind.as_deref())
+        || has_text(metadata.entry_point.as_deref())
+        || has_text(metadata.mvid.as_deref())
         || !metadata.modules.is_empty()
         || !metadata.assembly_references.is_empty()
         || !metadata.resources.is_empty()
@@ -85,7 +90,10 @@ pub(crate) fn ExplorerMetadataCard(
                     style: "display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;",
                     MetadataField { label: "Assembly name".to_string(), value: metadata_value(metadata.assembly_name.as_str()) }
                     MetadataField { label: "Version".to_string(), value: optional_value(metadata.version.as_deref()) }
-                    MetadataField { label: "Target framework".to_string(), value: optional_value(metadata.target_framework.as_deref()) }
+                    MetadataField {
+                        label: target_framework_label(&metadata).to_string(),
+                        value: target_framework_value(&metadata),
+                    }
                     MetadataField { label: "Runtime".to_string(), value: optional_value(metadata.runtime_version.as_deref()) }
                     MetadataField { label: "Architecture".to_string(), value: optional_value(metadata.architecture.as_deref()) }
                     MetadataField { label: "Module kind".to_string(), value: optional_value(metadata.module_kind.as_deref()) }
@@ -380,6 +388,34 @@ fn optional_value(value: Option<&str>) -> String {
         .to_string()
 }
 
+fn target_framework_value(metadata: &AssemblyMetadataEntry) -> String {
+    optional_value(
+        metadata
+            .target_framework
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .or(metadata.inferred_target_framework.as_deref()),
+    )
+}
+
+fn target_framework_label(metadata: &AssemblyMetadataEntry) -> &'static str {
+    if metadata
+        .target_framework
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        "Target framework"
+    } else if metadata
+        .inferred_target_framework
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        "Target framework (inferred)"
+    } else {
+        "Target framework"
+    }
+}
+
 fn metadata_value(value: &str) -> String {
     if value.trim().is_empty() {
         "—".to_string()
@@ -419,7 +455,7 @@ fn format_bytes(size: Option<i64>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_bytes, has_metadata};
+    use super::{format_bytes, has_metadata, target_framework_label, target_framework_value};
     use crate::ipc::AssemblyMetadataEntry;
 
     #[test]
@@ -435,6 +471,42 @@ mod tests {
         };
 
         assert!(has_metadata(&metadata));
+    }
+
+    #[test]
+    fn has_metadata_ignores_whitespace_only_optional_strings() {
+        let metadata = AssemblyMetadataEntry {
+            target_framework: Some("   ".to_string()),
+            ..AssemblyMetadataEntry::default()
+        };
+
+        assert!(!has_metadata(&metadata));
+    }
+
+    #[test]
+    fn target_framework_prefers_declared_value() {
+        let metadata = AssemblyMetadataEntry {
+            target_framework: Some("net8.0".to_string()),
+            inferred_target_framework: Some("netstandard2.1".to_string()),
+            ..AssemblyMetadataEntry::default()
+        };
+
+        assert_eq!(target_framework_label(&metadata), "Target framework");
+        assert_eq!(target_framework_value(&metadata), "net8.0");
+    }
+
+    #[test]
+    fn target_framework_falls_back_to_inferred_value() {
+        let metadata = AssemblyMetadataEntry {
+            inferred_target_framework: Some("netstandard2.1".to_string()),
+            ..AssemblyMetadataEntry::default()
+        };
+
+        assert_eq!(
+            target_framework_label(&metadata),
+            "Target framework (inferred)"
+        );
+        assert_eq!(target_framework_value(&metadata), "netstandard2.1");
     }
 
     #[test]

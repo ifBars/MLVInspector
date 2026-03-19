@@ -183,6 +183,9 @@ public sealed class AssemblyMetadataEntry
     [JsonPropertyName("targetFramework")]
     public string? TargetFramework { get; set; }
 
+    [JsonPropertyName("inferredTargetFramework")]
+    public string? InferredTargetFramework { get; set; }
+
     [JsonPropertyName("runtimeVersion")]
     public string? RuntimeVersion { get; set; }
 

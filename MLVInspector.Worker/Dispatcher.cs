@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using DecompilerSequencePoint = ICSharpCode.Decompiler.DebugInfo.SequencePoint;
 using ICSharpCode.Decompiler;
@@ -346,6 +347,7 @@ internal sealed class Dispatcher
     {
         var assemblyName = assembly.Name;
         var mainModule = assembly.MainModule;
+        var targetFramework = DetectTargetFrameworkFromAssembly(assembly);
 
         return new AssemblyMetadataEntry
         {
@@ -354,15 +356,24 @@ internal sealed class Dispatcher
             Version = assemblyName.Version?.ToString(),
             Culture = NullIfEmpty(assemblyName.Culture),
             PublicKeyToken = FormatPublicKeyToken(assemblyName.PublicKeyToken),
-            TargetFramework = DetectTargetFrameworkFromAssembly(assembly) ?? TryInferFromReferences(assemblyPath),
+            TargetFramework = targetFramework,
+            InferredTargetFramework = TryInferFromReferences(assemblyPath),
             RuntimeVersion = NullIfEmpty(mainModule.RuntimeVersion),
             Architecture = mainModule.Architecture.ToString(),
             ModuleKind = mainModule.Kind.ToString(),
             EntryPoint = assembly.EntryPoint?.FullName,
             Mvid = mainModule.Mvid.ToString(),
             Modules = assembly.Modules.Select(MapModule).ToList(),
-            AssemblyReferences = mainModule.AssemblyReferences.Select(MapAssemblyReference).ToList(),
-            Resources = mainModule.Resources.Select(MapResource).ToList(),
+            AssemblyReferences = assembly.Modules
+                .SelectMany(module => module.AssemblyReferences)
+                .GroupBy(reference => reference.FullName, StringComparer.Ordinal)
+                .Select(group => MapAssemblyReference(group.First()))
+                .ToList(),
+            Resources = assembly.Modules
+                .SelectMany(module => module.Resources)
+                .GroupBy(BuildResourceIdentity, StringComparer.Ordinal)
+                .Select(group => MapResource(group.First()))
+                .ToList(),
             CustomAttributes = assembly.CustomAttributes.Select(MapAttribute).ToList(),
         };
     }
@@ -425,51 +436,228 @@ internal sealed class Dispatcher
 
     private static string? BuildAttributeSummary(CustomAttribute attribute)
     {
-        var parts = new List<string>();
+        const int summaryBudget = 240;
+        var builder = new StringBuilder(summaryBudget);
+        var remainingBudget = summaryBudget;
 
-        if (attribute.ConstructorArguments.Count > 0)
-        {
-            var ctorArgs = string.Join(", ", attribute.ConstructorArguments.Select(FormatAttributeArgument));
-            parts.Add($"ctor({ctorArgs})");
-        }
+        AppendAttributeSection(
+            builder,
+            ref remainingBudget,
+            "ctor(",
+            attribute.ConstructorArguments,
+            (argument, budget) => FormatAttributeArgument(argument, budget));
+        AppendAttributeSection(
+            builder,
+            ref remainingBudget,
+            "props(",
+            attribute.Properties,
+            (property, budget) => FormatNamedAttributeValue(property.Name, property.Argument.Value, budget));
+        AppendAttributeSection(
+            builder,
+            ref remainingBudget,
+            "fields(",
+            attribute.Fields,
+            (field, budget) => FormatNamedAttributeValue(field.Name, field.Argument.Value, budget));
 
-        if (attribute.Properties.Count > 0)
-        {
-            var props = string.Join(", ", attribute.Properties.Select(p => $"{p.Name}={FormatAttributeValue(p.Argument.Value)}"));
-            parts.Add($"props({props})");
-        }
-
-        if (attribute.Fields.Count > 0)
-        {
-            var fields = string.Join(", ", attribute.Fields.Select(f => $"{f.Name}={FormatAttributeValue(f.Argument.Value)}"));
-            parts.Add($"fields({fields})");
-        }
-
-        if (parts.Count == 0)
+        if (builder.Length == 0)
             return null;
 
-        var summary = string.Join("; ", parts);
+        var summary = builder.ToString();
         return summary.Length > 240 ? $"{summary[..237]}..." : summary;
     }
 
     private static string FormatAttributeArgument(CustomAttributeArgument argument)
     {
-        return FormatAttributeValue(argument.Value);
+        return FormatAttributeArgument(argument, 80);
+    }
+
+    private static string FormatAttributeArgument(CustomAttributeArgument argument, int maxLength)
+    {
+        return FormatAttributeValue(argument.Value, maxLength);
     }
 
     private static string FormatAttributeValue(object? value)
     {
+        return FormatAttributeValue(value, 80);
+    }
+
+    private static string FormatAttributeValue(object? value, int maxLength)
+    {
+        if (maxLength <= 0)
+            return string.Empty;
+
         return value switch
         {
             null => "null",
-            string s when s.Length > 80 => $"\"{s[..77]}...\"",
-            string s => $"\"{s}\"",
-            CustomAttributeArgument nested => FormatAttributeArgument(nested),
-            CustomAttributeArgument[] array => $"[{string.Join(", ", array.Select(FormatAttributeArgument))}]",
-            IEnumerable<CustomAttributeArgument> enumerable => $"[{string.Join(", ", enumerable.Select(FormatAttributeArgument))}]",
+            string s => QuoteAndTruncate(s, maxLength),
+            CustomAttributeArgument nested => FormatAttributeArgument(nested, maxLength),
+            CustomAttributeArgument[] array => FormatAttributeArgumentList(array, maxLength),
+            IEnumerable<CustomAttributeArgument> enumerable => FormatAttributeArgumentList(enumerable, maxLength),
             TypeReference typeRef => typeRef.FullName,
             _ => value.ToString() ?? string.Empty,
         };
+    }
+
+    private static void AppendAttributeSection<T>(
+        StringBuilder builder,
+        ref int remainingBudget,
+        string sectionPrefix,
+        IEnumerable<T> items,
+        Func<T, int, string> formatItem)
+    {
+        const string sectionSeparator = "; ";
+        const string itemSeparator = ", ";
+        const string sectionSuffix = ")";
+
+        using var enumerator = items.GetEnumerator();
+        if (!enumerator.MoveNext())
+            return;
+
+        var leadingSeparatorLength = builder.Length == 0 ? 0 : sectionSeparator.Length;
+        var minimumItemBudget = remainingBudget - leadingSeparatorLength - sectionPrefix.Length - sectionSuffix.Length;
+        if (minimumItemBudget <= 0)
+            return;
+
+        var initialLength = builder.Length;
+        var initialBudget = remainingBudget;
+
+        if (builder.Length > 0)
+        {
+            builder.Append(sectionSeparator);
+            remainingBudget -= sectionSeparator.Length;
+        }
+
+        builder.Append(sectionPrefix);
+        remainingBudget -= sectionPrefix.Length;
+
+        var appendedAny = false;
+
+        do
+        {
+            var currentSeparatorLength = appendedAny ? itemSeparator.Length : 0;
+            var itemBudget = remainingBudget - currentSeparatorLength - sectionSuffix.Length;
+            if (itemBudget <= 0)
+                break;
+
+            var itemText = TruncateWithEllipsis(formatItem(enumerator.Current, itemBudget), itemBudget);
+            if (string.IsNullOrEmpty(itemText))
+                break;
+
+            if (appendedAny)
+            {
+                builder.Append(itemSeparator);
+                remainingBudget -= itemSeparator.Length;
+            }
+
+            builder.Append(itemText);
+            remainingBudget -= itemText.Length;
+            appendedAny = true;
+        }
+        while (enumerator.MoveNext());
+
+        if (!appendedAny)
+        {
+            builder.Length = initialLength;
+            remainingBudget = initialBudget;
+            return;
+        }
+
+        builder.Append(sectionSuffix);
+        remainingBudget -= sectionSuffix.Length;
+    }
+
+    private static string FormatNamedAttributeValue(string name, object? value, int maxLength)
+    {
+        var prefix = $"{name}=";
+        if (maxLength <= prefix.Length)
+            return TruncateWithEllipsis(prefix, maxLength);
+
+        return prefix + FormatAttributeValue(value, maxLength - prefix.Length);
+    }
+
+    private static string FormatAttributeArgumentList(IEnumerable<CustomAttributeArgument> arguments, int maxLength)
+    {
+        if (maxLength <= 0)
+            return string.Empty;
+
+        var builder = new StringBuilder(Math.Min(maxLength, 80));
+        var remainingBudget = maxLength;
+
+        builder.Append('[');
+        remainingBudget--;
+
+        var appendedAny = false;
+        foreach (var argument in arguments)
+        {
+            var separatorLength = appendedAny ? 2 : 0;
+            var itemBudget = remainingBudget - separatorLength - 1;
+            if (itemBudget <= 0)
+                break;
+
+            var itemText = TruncateWithEllipsis(FormatAttributeArgument(argument, itemBudget), itemBudget);
+            if (string.IsNullOrEmpty(itemText))
+                break;
+
+            if (appendedAny)
+            {
+                builder.Append(", ");
+                remainingBudget -= 2;
+            }
+
+            builder.Append(itemText);
+            remainingBudget -= itemText.Length;
+            appendedAny = true;
+        }
+
+        if (remainingBudget > 0)
+        {
+            builder.Append(']');
+            remainingBudget--;
+        }
+
+        return builder.ToString();
+    }
+
+    private static string QuoteAndTruncate(string value, int maxLength)
+    {
+        if (maxLength <= 0)
+            return string.Empty;
+
+        if (maxLength == 1)
+            return "\"";
+
+        return $"\"{TruncateWithEllipsis(value, maxLength - 2)}\"";
+    }
+
+    private static string TruncateWithEllipsis(string value, int maxLength)
+    {
+        if (maxLength <= 0)
+            return string.Empty;
+
+        if (value.Length <= maxLength)
+            return value;
+
+        if (maxLength <= 3)
+            return value[..maxLength];
+
+        return $"{value[..(maxLength - 3)]}...";
+    }
+
+    private static string BuildResourceIdentity(Mono.Cecil.Resource resource)
+    {
+        var implementation = resource switch
+        {
+            LinkedResource linked => linked.File,
+            AssemblyLinkedResource linkedAssembly => linkedAssembly.Assembly?.FullName,
+            _ => null,
+        };
+
+        return string.Join(
+            "|",
+            resource.Name,
+            resource.ResourceType,
+            NullIfEmpty(resource.Attributes.ToString()) ?? string.Empty,
+            NullIfEmpty(implementation) ?? string.Empty);
     }
 
     private static string? FormatPublicKeyToken(byte[]? token)
