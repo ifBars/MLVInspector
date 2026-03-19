@@ -266,8 +266,9 @@ pub fn execute_command(mut context: CommandContext, command_id: CommandId) {
             let worker = context.state.worker.read().clone();
             let analysis = context
                 .state
-                .get_analysis_entry(&format!("{}::explore", assembly.id))
-                .and_then(|entry| entry.result);
+                .with_analysis_result(&format!("{}::explore", assembly.id), |result| {
+                    result.clone()
+                });
             let mut last_error = context.last_error;
             let state = context.state;
 

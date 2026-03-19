@@ -185,6 +185,7 @@ mod tests {
                     mode: "combined".to_string(),
                     explore: Some(crate::ipc::ExplorePayload {
                         assembly_path: r"C:\samples\First.dll".to_string(),
+                        assembly_metadata: crate::ipc::AssemblyMetadataEntry::default(),
                         methods: vec![crate::ipc::MethodEntry {
                             type_name: "Example.Loader".to_string(),
                             method_name: "DownloadPayload".to_string(),

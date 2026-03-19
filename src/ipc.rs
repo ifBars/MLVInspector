@@ -74,9 +74,74 @@ pub struct WorkerResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ExplorePayload {
     pub assembly_path: String,
+    #[serde(default)]
+    pub assembly_metadata: AssemblyMetadataEntry,
     pub methods: Vec<MethodEntry>,
     #[serde(default)]
     pub types: Vec<TypeEntry>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssemblyMetadataEntry {
+    pub assembly_name: String,
+    pub full_name: String,
+    pub version: Option<String>,
+    pub culture: Option<String>,
+    pub public_key_token: Option<String>,
+    pub target_framework: Option<String>,
+    pub inferred_target_framework: Option<String>,
+    pub runtime_version: Option<String>,
+    pub architecture: Option<String>,
+    pub module_kind: Option<String>,
+    pub entry_point: Option<String>,
+    pub mvid: Option<String>,
+    #[serde(default)]
+    pub modules: Vec<ModuleMetadataEntry>,
+    #[serde(default)]
+    pub assembly_references: Vec<AssemblyReferenceEntry>,
+    #[serde(default)]
+    pub resources: Vec<ResourceMetadataEntry>,
+    #[serde(default)]
+    pub custom_attributes: Vec<AttributeMetadataEntry>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModuleMetadataEntry {
+    pub name: String,
+    pub runtime_version: Option<String>,
+    pub architecture: Option<String>,
+    pub module_kind: Option<String>,
+    pub mvid: Option<String>,
+    pub file_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssemblyReferenceEntry {
+    pub name: String,
+    pub full_name: String,
+    pub version: Option<String>,
+    pub culture: Option<String>,
+    pub public_key_token: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceMetadataEntry {
+    pub name: String,
+    pub resource_type: String,
+    pub attributes: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub implementation: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttributeMetadataEntry {
+    pub attribute_type: String,
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -278,6 +343,7 @@ mod tests {
                 .expect("payload should deserialize");
 
         assert_eq!(payload.assembly_path, "sample.dll");
+        assert!(payload.assembly_metadata.assembly_name.is_empty());
         assert!(payload.methods.is_empty());
         assert!(payload.types.is_empty());
     }

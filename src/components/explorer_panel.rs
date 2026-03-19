@@ -5,6 +5,7 @@ use dioxus::prelude::*;
 
 use crate::state::AppState;
 
+use super::explorer_metadata::{has_metadata, ExplorerMetadataCard};
 use super::helpers::{extract_methods, group_methods_by_namespace, method_tab_id, type_tab_id};
 use super::theme::{
     C_ACCENT_GREEN, C_BG_BASE, C_BG_ELEVATED, C_BG_SURFACE, C_BORDER, C_BORDER_ACCENT,
@@ -21,27 +22,30 @@ pub fn ExplorerPanel(
 ) -> Element {
     let state = use_context::<AppState>();
 
-    // Collapse state is local to this panel
     let mut collapsed_assemblies = use_signal(BTreeSet::<String>::new);
     let mut collapsed_namespaces = use_signal(BTreeSet::<String>::new);
     let mut collapsed_types = use_signal(BTreeSet::<String>::new);
+    let collapsed_metadata_sections = use_signal(BTreeSet::<String>::new);
 
     let selected_id = state.selected_id.read().clone();
     let assemblies = state.assemblies.read().clone();
 
-    let methods = if let Some(ref id) = selected_id {
-        let explore_key = format!("{id}::explore");
-        state
-            .get_analysis_entry(&explore_key)
-            .as_ref()
-            .and_then(|e| e.result.as_ref())
-            .map(extract_methods)
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-
+    let (methods, assembly_metadata) = selected_id
+        .as_ref()
+        .and_then(|id| {
+            let explore_key = format!("{id}::explore");
+            state.with_analysis_result(&explore_key, |result| {
+                let metadata = result
+                    .explore
+                    .as_ref()
+                    .map(|payload| payload.assembly_metadata.clone())
+                    .unwrap_or_default();
+                (extract_methods(result), metadata)
+            })
+        })
+        .unwrap_or_default();
     let grouped_methods = group_methods_by_namespace(&methods);
+
     let methods_count = methods.len();
     let class_count = grouped_methods
         .iter()
@@ -72,6 +76,7 @@ pub fn ExplorerPanel(
         .cloned();
 
     let assemblies_count = assemblies.len();
+    let has_metadata = has_metadata(&assembly_metadata);
 
     rsx! {
         div {
@@ -188,6 +193,24 @@ pub fn ExplorerPanel(
 
             div {
                 style: "flex: 1; overflow-y: auto; padding: 8px 0 10px;",
+
+                if let Some(asm) = selected_assembly.clone() {
+                    div {
+                        style: "padding: 0 8px 10px; display: flex; flex-direction: column; gap: 8px;",
+
+                        if has_metadata {
+                            ExplorerMetadataCard {
+                                assembly_name: asm.name.clone(),
+                                assembly_path: asm.path.clone(),
+                                metadata: assembly_metadata.clone(),
+                                methods_count,
+                                class_count,
+                                namespace_count,
+                                collapsed_sections: collapsed_metadata_sections,
+                            }
+                        }
+                    }
+                }
 
                 div {
                     style: "display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px 8px;",
@@ -320,7 +343,6 @@ pub fn ExplorerPanel(
                                                                 style: "display: flex; gap: 4px; margin: 0 8px 3px; \
                                                                         width: calc(100% - 16px);",
 
-                                                                // Expand/collapse toggle
                                                                 button {
                                                                     style: format!(
                                                                         "width: 26px; flex-shrink: 0; \
@@ -339,7 +361,6 @@ pub fn ExplorerPanel(
                                                                     "{type_chevron}"
                                                                 }
 
-                                                                // Type name button (opens type tab)
                                                                 button {
                                                                     style: format!(
                                                                         "display: flex; align-items: center; gap: 8px; \

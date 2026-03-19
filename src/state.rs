@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use dioxus::prelude::*;
 
 use crate::services::worker_client::{WorkerClient, WorkerConfig};
-use crate::types::{AnalysisEntry, AssemblyId, OpenAssembly, RuleInfo};
+use crate::types::{AnalysisEntry, AnalysisResult, AssemblyId, OpenAssembly, RuleInfo};
 
 /// Global application state.
 ///
@@ -101,9 +101,16 @@ impl AppState {
         self.analysis_entries.write().insert(key, entry);
     }
 
-    /// Get an analysis entry by key.
-    pub fn get_analysis_entry(self, key: &str) -> Option<AnalysisEntry> {
-        self.analysis_entries.read().get(key).cloned()
+    /// Read a typed analysis result without cloning the full entry.
+    pub fn with_analysis_result<R>(
+        self,
+        key: &str,
+        f: impl FnOnce(&AnalysisResult) -> R,
+    ) -> Option<R> {
+        let analysis_entries = self.analysis_entries.read();
+        analysis_entries
+            .get(key)
+            .and_then(|entry| entry.result.as_ref().map(f))
     }
 
     /// Clear all assemblies and analysis state.

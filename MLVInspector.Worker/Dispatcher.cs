@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using DecompilerSequencePoint = ICSharpCode.Decompiler.DebugInfo.SequencePoint;
 using ICSharpCode.Decompiler;
@@ -106,6 +107,7 @@ internal sealed class Dispatcher
         return new ExplorePayload
         {
             AssemblyPath = p.Assembly,
+            AssemblyMetadata = BuildAssemblyMetadata(assembly, p.Assembly),
             Methods = methods,
             Types = types,
         };
@@ -339,6 +341,351 @@ internal sealed class Dispatcher
         }
 
         return null;
+    }
+
+    private static AssemblyMetadataEntry BuildAssemblyMetadata(AssemblyDefinition assembly, string assemblyPath)
+    {
+        var assemblyName = assembly.Name;
+        var mainModule = assembly.MainModule;
+        var targetFramework = DetectTargetFrameworkFromAssembly(assembly);
+
+        return new AssemblyMetadataEntry
+        {
+            AssemblyName = assemblyName.Name ?? Path.GetFileNameWithoutExtension(assemblyPath),
+            FullName = assemblyName.FullName,
+            Version = assemblyName.Version?.ToString(),
+            Culture = NullIfEmpty(assemblyName.Culture),
+            PublicKeyToken = FormatPublicKeyToken(assemblyName.PublicKeyToken),
+            TargetFramework = targetFramework,
+            InferredTargetFramework = TryInferFromReferences(assemblyPath),
+            RuntimeVersion = NullIfEmpty(mainModule.RuntimeVersion),
+            Architecture = mainModule.Architecture.ToString(),
+            ModuleKind = mainModule.Kind.ToString(),
+            EntryPoint = assembly.EntryPoint?.FullName,
+            Mvid = mainModule.Mvid.ToString(),
+            Modules = assembly.Modules.Select(MapModule).ToList(),
+            AssemblyReferences = assembly.Modules
+                .SelectMany(module => module.AssemblyReferences)
+                .GroupBy(reference => reference.FullName, StringComparer.Ordinal)
+                .Select(group => MapAssemblyReference(group.First()))
+                .ToList(),
+            Resources = assembly.Modules
+                .SelectMany(module => module.Resources)
+                .GroupBy(BuildResourceIdentity, StringComparer.Ordinal)
+                .Select(group => MapResource(group.First()))
+                .ToList(),
+            CustomAttributes = assembly.CustomAttributes.Select(MapAttribute).ToList(),
+        };
+    }
+
+    private static ModuleMetadataEntry MapModule(ModuleDefinition module)
+    {
+        return new ModuleMetadataEntry
+        {
+            Name = module.Name,
+            RuntimeVersion = NullIfEmpty(module.RuntimeVersion),
+            Architecture = module.Architecture.ToString(),
+            ModuleKind = module.Kind.ToString(),
+            Mvid = module.Mvid.ToString(),
+            FileName = NullIfEmpty(module.FileName),
+        };
+    }
+
+    private static AssemblyReferenceEntry MapAssemblyReference(Mono.Cecil.AssemblyNameReference reference)
+    {
+        return new AssemblyReferenceEntry
+        {
+            Name = reference.Name,
+            FullName = reference.FullName,
+            Version = reference.Version?.ToString(),
+            Culture = NullIfEmpty(reference.Culture),
+            PublicKeyToken = FormatPublicKeyToken(reference.PublicKeyToken),
+        };
+    }
+
+    private static ResourceMetadataEntry MapResource(Mono.Cecil.Resource resource)
+    {
+        // Avoid materializing embedded resource contents during Explore().
+        long? sizeBytes = null;
+
+        var implementation = resource switch
+        {
+            LinkedResource linked => linked.File,
+            AssemblyLinkedResource linkedAssembly => linkedAssembly.Assembly?.FullName,
+            _ => null,
+        };
+
+        return new ResourceMetadataEntry
+        {
+            Name = resource.Name,
+            ResourceType = resource.ResourceType.ToString(),
+            Attributes = resource.Attributes.ToString(),
+            SizeBytes = sizeBytes,
+            Implementation = NullIfEmpty(implementation),
+        };
+    }
+
+    private static AttributeMetadataEntry MapAttribute(CustomAttribute attribute)
+    {
+        return new AttributeMetadataEntry
+        {
+            AttributeType = attribute.AttributeType.FullName,
+            Summary = BuildAttributeSummary(attribute),
+        };
+    }
+
+    private static string? BuildAttributeSummary(CustomAttribute attribute)
+    {
+        const int summaryBudget = 240;
+        var builder = new StringBuilder(summaryBudget);
+        var remainingBudget = summaryBudget;
+
+        AppendAttributeSection(
+            builder,
+            ref remainingBudget,
+            "ctor(",
+            attribute.ConstructorArguments,
+            (argument, budget) => FormatAttributeArgument(argument, budget));
+        AppendAttributeSection(
+            builder,
+            ref remainingBudget,
+            "props(",
+            attribute.Properties,
+            (property, budget) => FormatNamedAttributeValue(property.Name, property.Argument.Value, budget));
+        AppendAttributeSection(
+            builder,
+            ref remainingBudget,
+            "fields(",
+            attribute.Fields,
+            (field, budget) => FormatNamedAttributeValue(field.Name, field.Argument.Value, budget));
+
+        if (builder.Length == 0)
+            return null;
+
+        var summary = builder.ToString();
+        return summary.Length > 240 ? $"{summary[..237]}..." : summary;
+    }
+
+    private static string FormatAttributeArgument(CustomAttributeArgument argument)
+    {
+        return FormatAttributeArgument(argument, 80);
+    }
+
+    private static string FormatAttributeArgument(CustomAttributeArgument argument, int maxLength)
+    {
+        return FormatAttributeValue(argument.Value, maxLength);
+    }
+
+    private static string FormatAttributeValue(object? value)
+    {
+        return FormatAttributeValue(value, 80);
+    }
+
+    private static string FormatAttributeValue(object? value, int maxLength)
+    {
+        if (maxLength <= 0)
+            return string.Empty;
+
+        return value switch
+        {
+            null => "null",
+            string s => QuoteAndTruncate(s, maxLength),
+            CustomAttributeArgument nested => FormatAttributeArgument(nested, maxLength),
+            CustomAttributeArgument[] array => FormatAttributeArgumentList(array, maxLength),
+            IEnumerable<CustomAttributeArgument> enumerable => FormatAttributeArgumentList(enumerable, maxLength),
+            TypeReference typeRef => typeRef.FullName,
+            _ => value.ToString() ?? string.Empty,
+        };
+    }
+
+    private static void AppendAttributeSection<T>(
+        StringBuilder builder,
+        ref int remainingBudget,
+        string sectionPrefix,
+        IEnumerable<T> items,
+        Func<T, int, string> formatItem)
+    {
+        const string sectionSeparator = "; ";
+        const string itemSeparator = ", ";
+        const string sectionSuffix = ")";
+
+        using var enumerator = items.GetEnumerator();
+        if (!enumerator.MoveNext())
+            return;
+
+        var leadingSeparatorLength = builder.Length == 0 ? 0 : sectionSeparator.Length;
+        var minimumItemBudget = remainingBudget - leadingSeparatorLength - sectionPrefix.Length - sectionSuffix.Length;
+        if (minimumItemBudget <= 0)
+            return;
+
+        var initialLength = builder.Length;
+        var initialBudget = remainingBudget;
+
+        if (builder.Length > 0)
+        {
+            builder.Append(sectionSeparator);
+            remainingBudget -= sectionSeparator.Length;
+        }
+
+        builder.Append(sectionPrefix);
+        remainingBudget -= sectionPrefix.Length;
+
+        var appendedAny = false;
+
+        do
+        {
+            var currentSeparatorLength = appendedAny ? itemSeparator.Length : 0;
+            var itemBudget = remainingBudget - currentSeparatorLength - sectionSuffix.Length;
+            if (itemBudget <= 0)
+                break;
+
+            var itemText = TruncateWithEllipsis(formatItem(enumerator.Current, itemBudget), itemBudget);
+            if (string.IsNullOrEmpty(itemText))
+                break;
+
+            if (appendedAny)
+            {
+                builder.Append(itemSeparator);
+                remainingBudget -= itemSeparator.Length;
+            }
+
+            builder.Append(itemText);
+            remainingBudget -= itemText.Length;
+            appendedAny = true;
+        }
+        while (enumerator.MoveNext());
+
+        if (!appendedAny)
+        {
+            builder.Length = initialLength;
+            remainingBudget = initialBudget;
+            return;
+        }
+
+        builder.Append(sectionSuffix);
+        remainingBudget -= sectionSuffix.Length;
+    }
+
+    private static string FormatNamedAttributeValue(string name, object? value, int maxLength)
+    {
+        var prefix = $"{name}=";
+        if (maxLength <= prefix.Length)
+            return TruncateWithEllipsis(prefix, maxLength);
+
+        return prefix + FormatAttributeValue(value, maxLength - prefix.Length);
+    }
+
+    private static string FormatAttributeArgumentList(IEnumerable<CustomAttributeArgument> arguments, int maxLength)
+    {
+        if (maxLength <= 0)
+            return string.Empty;
+
+        var builder = new StringBuilder(Math.Min(maxLength, 80));
+        var remainingBudget = maxLength;
+
+        builder.Append('[');
+        remainingBudget--;
+
+        var appendedAny = false;
+        foreach (var argument in arguments)
+        {
+            var separatorLength = appendedAny ? 2 : 0;
+            var itemBudget = remainingBudget - separatorLength - 1;
+            if (itemBudget <= 0)
+                break;
+
+            var itemText = TruncateWithEllipsis(FormatAttributeArgument(argument, itemBudget), itemBudget);
+            if (string.IsNullOrEmpty(itemText))
+                break;
+
+            if (appendedAny)
+            {
+                builder.Append(", ");
+                remainingBudget -= 2;
+            }
+
+            builder.Append(itemText);
+            remainingBudget -= itemText.Length;
+            appendedAny = true;
+        }
+
+        if (remainingBudget > 0)
+        {
+            builder.Append(']');
+            remainingBudget--;
+        }
+
+        return builder.ToString();
+    }
+
+    private static string QuoteAndTruncate(string value, int maxLength)
+    {
+        if (maxLength <= 0)
+            return string.Empty;
+
+        if (maxLength == 1)
+            return "\"";
+
+        return $"\"{TruncateWithEllipsis(value, maxLength - 2)}\"";
+    }
+
+    private static string TruncateWithEllipsis(string value, int maxLength)
+    {
+        if (maxLength <= 0)
+            return string.Empty;
+
+        if (value.Length <= maxLength)
+            return value;
+
+        if (maxLength <= 3)
+            return value[..maxLength];
+
+        return $"{value[..(maxLength - 3)]}...";
+    }
+
+    private static string BuildResourceIdentity(Mono.Cecil.Resource resource)
+    {
+        var implementation = resource switch
+        {
+            LinkedResource linked => linked.File,
+            AssemblyLinkedResource linkedAssembly => linkedAssembly.Assembly?.FullName,
+            _ => null,
+        };
+
+        return string.Join(
+            "|",
+            resource.Name,
+            resource.ResourceType,
+            NullIfEmpty(resource.Attributes.ToString()) ?? string.Empty,
+            NullIfEmpty(implementation) ?? string.Empty);
+    }
+
+    private static string? FormatPublicKeyToken(byte[]? token)
+    {
+        if (token == null || token.Length == 0)
+            return null;
+
+        return string.Concat(token.Select(b => b.ToString("x2")));
+    }
+
+    private static string? DetectTargetFrameworkFromAssembly(AssemblyDefinition assembly)
+    {
+        foreach (var attr in assembly.CustomAttributes)
+        {
+            if (attr.AttributeType.FullName == "System.Runtime.Versioning.TargetFrameworkAttribute" &&
+                attr.ConstructorArguments.Count > 0 &&
+                attr.ConstructorArguments[0].Value is string frameworkMoniker)
+            {
+                return frameworkMoniker;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? NullIfEmpty(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ? null : value;
     }
 
     private static string? DetectTargetFrameworkWithFallback(string assemblyPath)

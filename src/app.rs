@@ -180,10 +180,7 @@ pub fn App() -> Element {
     let findings_count = if let Some(ref id) = selected_id {
         let scan_key = format!("{id}::scan");
         state
-            .get_analysis_entry(&scan_key)
-            .as_ref()
-            .and_then(|e| e.result.as_ref())
-            .map(extract_findings)
+            .with_analysis_result(&scan_key, extract_findings)
             .map(|f| f.len())
             .unwrap_or(0)
     } else {
