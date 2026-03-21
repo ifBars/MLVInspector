@@ -1,6 +1,6 @@
 [package]
 name = "mlvinspector"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 authors = ["bars"]
 description = "MLVInspector - .NET assembly analysis and MLVScan rule evaluation GUI"
