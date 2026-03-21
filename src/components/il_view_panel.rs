@@ -161,11 +161,18 @@ pub fn IlViewPanel(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let show_class_overview = active_tab
+    let selected_type_visible_methods = selected_type_methods
+        .iter()
+        .filter(|method| !is_redundant_type_member_method(method))
+        .cloned()
+        .collect::<Vec<_>>();
+    let hidden_type_method_count = selected_type_methods
+        .len()
+        .saturating_sub(selected_type_visible_methods.len());
+    let show_type_overview = active_tab
         .as_ref()
         .map(|tab| tab.kind == IlTabKind::Type)
-        .unwrap_or(false)
-        && !selected_type_methods.is_empty();
+        .unwrap_or(false);
 
     let active_finding = selected_finding().and_then(|index| findings.get(index).cloned());
     let active_csharp_finding_span = active_finding.as_ref().and_then(|finding| {
@@ -481,12 +488,11 @@ pub fn IlViewPanel(
                     if view_mode() == ViewMode::Il {
                         // ── IL view ───────────────────────────────────────────────
 
-                        if show_class_overview {
+                        if show_type_overview {
                             if let Some(type_name) = selected_type_name.as_ref() {
-                                // Class overview header
                                 div {
                                     style: format!(
-                                        "margin-bottom: 14px; padding: 10px 12px; \
+                                         "margin-bottom: 14px; padding: 10px 12px; \
                                          background: {C_BG_ELEVATED}; border-radius: 8px; \
                                          border: 1px solid {C_BORDER};"
                                     ),
@@ -499,14 +505,33 @@ pub fn IlViewPanel(
                                         "{type_name}"
                                     }
                                     div {
-                                        style: format!("font-size: 10px; color: {C_TEXT_SECONDARY};"),
-                                        "{selected_type_methods.len()} methods"
+                                        style: format!("font-size: 10px; color: {C_TEXT_SECONDARY}; line-height: 1.5;"),
+                                        "{selected_type_visible_methods.len()} visible methods"
+                                        if hidden_type_method_count > 0 {
+                                            " / {hidden_type_method_count} hidden accessors"
+                                        }
                                     }
                                 }
 
-                                // All methods in the class
+                                if selected_type_visible_methods.is_empty() {
+                                    div {
+                                        style: format!(
+                                            "margin-bottom: 14px; padding: 10px 12px; background: {C_BG_SURFACE}; \
+                                             border-radius: 8px; border: 1px solid {C_BORDER}; color: {C_TEXT_SECONDARY};"
+                                        ),
+                                        div {
+                                            style: format!("font-size: 11px; color: {C_TEXT_PRIMARY}; margin-bottom: 4px;"),
+                                            "No non-accessor method bodies available"
+                                        }
+                                        div {
+                                            style: format!("font-size: 10px; line-height: 1.5; color: {C_TEXT_SECONDARY};"),
+                                            "This type can still be inspected in the C# tab. Property/event accessors are hidden here by default because they are usually redundant."
+                                        }
+                                    }
+                                }
+
                                 {
-                                    selected_type_methods.clone().into_iter().map(|method| {
+                                    selected_type_visible_methods.clone().into_iter().map(|method| {
                                         let click_type = method.type_name.clone();
                                         let click_method = method.method_name.clone();
                                         let key_method = method.method_name.clone();
@@ -555,60 +580,69 @@ pub fn IlViewPanel(
                                                 }
                                                 div {
                                                     style: format!("font-family: {FONT_MONO};"),
-                                                    {
-                                                        let highlighted_offsets = active_finding
-                                                            .as_ref()
-                                                            .and_then(|finding| finding.navigation.as_ref())
-                                                            .and_then(|navigation| {
-                                                                navigation.method_spans.iter().find(|span| {
-                                                                    resolve_method_reference(
-                                                                        &methods,
-                                                                        &span.type_name,
-                                                                        &span.method_name,
-                                                                    )
-                                                                    .is_some_and(|(resolved_type, resolved_method)| {
-                                                                        resolved_type == method.type_name
-                                                                            && resolved_method == method.method_name
+                                                    if method.instructions.is_empty() {
+                                                        div {
+                                                            style: format!(
+                                                                "padding: 6px 0; font-size: 10px; color: {C_TEXT_MUTED};"
+                                                            ),
+                                                            "<no IL body>"
+                                                        }
+                                                    } else {
+                                                        {
+                                                            let highlighted_offsets = active_finding
+                                                                .as_ref()
+                                                                .and_then(|finding| finding.navigation.as_ref())
+                                                                .and_then(|navigation| {
+                                                                    navigation.method_spans.iter().find(|span| {
+                                                                        resolve_method_reference(
+                                                                            &methods,
+                                                                            &span.type_name,
+                                                                            &span.method_name,
+                                                                        )
+                                                                        .is_some_and(|(resolved_type, resolved_method)| {
+                                                                            resolved_type == method.type_name
+                                                                                && resolved_method == method.method_name
+                                                                        })
                                                                     })
                                                                 })
-                                                            })
-                                                            .map(|span| span.il_offsets.clone())
-                                                            .unwrap_or_default();
-                                                        method.instructions.iter().map(move |ins| {
-                                                            let is_highlighted =
-                                                                highlighted_offsets.contains(&ins.offset);
-                                                            let row_class = if is_highlighted {
-                                                                "il-row highlighted"
-                                                            } else {
-                                                                "il-row"
-                                                            };
-                                                            rsx! {
-                                                                div {
-                                                                    key: "{key_method}-{ins.offset}-{ins.op_code}",
-                                                                    id: "il-{ins.offset}",
-                                                                    class: "{row_class}",
-                                                                    span {
-                                                                        style: format!(
-                                                                            "color: {C_ACCENT_BLUE}; font-size: 11px;"
-                                                                        ),
-                                                                        "IL_{ins.offset:04X}"
-                                                                    }
-                                                                    span {
-                                                                        style: format!(
-                                                                            "color: {C_ACCENT_GREEN}; font-size: 11px; \
-                                                                             font-weight: 500;"
-                                                                        ),
-                                                                        "{ins.op_code}"
-                                                                    }
-                                                                    span {
-                                                                        style: format!(
-                                                                            "color: {C_TEXT_SECONDARY}; font-size: 11px;"
-                                                                        ),
-                                                                        "{ins.operand}"
+                                                                .map(|span| span.il_offsets.clone())
+                                                                .unwrap_or_default();
+                                                            method.instructions.iter().map(move |ins| {
+                                                                let is_highlighted =
+                                                                    highlighted_offsets.contains(&ins.offset);
+                                                                let row_class = if is_highlighted {
+                                                                    "il-row highlighted"
+                                                                } else {
+                                                                    "il-row"
+                                                                };
+                                                                rsx! {
+                                                                    div {
+                                                                        key: "{key_method}-{ins.offset}-{ins.op_code}",
+                                                                        id: "il-{ins.offset}",
+                                                                        class: "{row_class}",
+                                                                        span {
+                                                                            style: format!(
+                                                                                "color: {C_ACCENT_BLUE}; font-size: 11px;"
+                                                                            ),
+                                                                            "IL_{ins.offset:04X}"
+                                                                        }
+                                                                        span {
+                                                                            style: format!(
+                                                                                "color: {C_ACCENT_GREEN}; font-size: 11px; \
+                                                                                 font-weight: 500;"
+                                                                            ),
+                                                                            "{ins.op_code}"
+                                                                        }
+                                                                        span {
+                                                                            style: format!(
+                                                                                "color: {C_TEXT_SECONDARY}; font-size: 11px;"
+                                                                            ),
+                                                                            "{ins.operand}"
+                                                                        }
                                                                     }
                                                                 }
-                                                            }
-                                                        })
+                                                            })
+                                                        }
                                                     }
                                                 }
                                             }
@@ -841,4 +875,11 @@ pub fn IlViewPanel(
             }
         }
     }
+}
+
+fn is_redundant_type_member_method(method: &super::view_models::UiMethod) -> bool {
+    method.method_name.starts_with("get_")
+        || method.method_name.starts_with("set_")
+        || method.method_name.starts_with("add_")
+        || method.method_name.starts_with("remove_")
 }

@@ -285,6 +285,9 @@ public sealed class TypeEntry
     [JsonPropertyName("typeName")]
     public string TypeName { get; set; } = "";
 
+    [JsonPropertyName("kind")]
+    public string Kind { get; set; } = "";
+
     [JsonPropertyName("methods")]
     public List<MethodEntry> Methods { get; set; } = new();
 }
@@ -473,9 +476,6 @@ public sealed class DataFlowChainEntry
 
     [JsonPropertyName("pattern")]
     public string Pattern { get; set; } = "";
-
-    [JsonPropertyName("confidence")]
-    public double Confidence { get; set; }
 
     [JsonPropertyName("sourceVariable")]
     public string? SourceVariable { get; set; }

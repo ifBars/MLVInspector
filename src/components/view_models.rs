@@ -48,6 +48,7 @@ pub struct UiFindingMethodSpan {
 pub struct UiTypeGroup {
     pub full_type_name: String,
     pub display_name: String,
+    pub kind: String,
     pub methods: Vec<UiMethod>,
 }
 

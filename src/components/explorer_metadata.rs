@@ -5,14 +5,19 @@ use dioxus::prelude::*;
 use crate::ipc::{AssemblyMetadataEntry, AttributeMetadataEntry, ResourceMetadataEntry};
 
 use super::theme::{
-    C_BG_BASE, C_BG_ELEVATED, C_BG_SURFACE, C_BORDER, C_TEXT_MUTED, C_TEXT_PRIMARY, FONT_MONO,
+    C_BG_BASE, C_BG_ELEVATED, C_BORDER, C_BORDER_ACCENT, C_TEXT_MUTED, C_TEXT_PRIMARY,
+    C_TEXT_SECONDARY, FONT_MONO,
 };
 
-pub(crate) fn has_metadata(metadata: &AssemblyMetadataEntry) -> bool {
-    fn has_text(value: Option<&str>) -> bool {
-        value.is_some_and(|value| !value.trim().is_empty())
-    }
+const METADATA_SECTION_KEYS: [&str; 5] = [
+    "overview",
+    "modules",
+    "references",
+    "resources",
+    "attributes",
+];
 
+pub(crate) fn has_metadata(metadata: &AssemblyMetadataEntry) -> bool {
     !metadata.assembly_name.trim().is_empty()
         || !metadata.full_name.trim().is_empty()
         || has_text(metadata.version.as_deref())
@@ -31,171 +36,157 @@ pub(crate) fn has_metadata(metadata: &AssemblyMetadataEntry) -> bool {
         || !metadata.custom_attributes.is_empty()
 }
 
+pub(crate) fn default_collapsed_metadata_sections() -> BTreeSet<String> {
+    METADATA_SECTION_KEYS
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
 #[component]
 pub(crate) fn ExplorerMetadataCard(
     assembly_name: String,
     assembly_path: String,
     metadata: AssemblyMetadataEntry,
-    methods_count: usize,
-    class_count: usize,
-    namespace_count: usize,
     collapsed_sections: Signal<BTreeSet<String>>,
 ) -> Element {
     let resources_count = metadata.resources.len();
     let references_count = metadata.assembly_references.len();
     let attributes_count = metadata.custom_attributes.len();
     let modules_count = metadata.modules.len();
+    let display_name = display_or_fallback(&metadata.assembly_name, &assembly_name);
 
     rsx! {
         div {
             style: format!(
-                "border: 1px solid {C_BORDER}; background: {C_BG_SURFACE}; border-radius: 10px; \
-                 padding: 10px; display: flex; flex-direction: column; gap: 10px;"
+                "border: 1px solid {C_BORDER}; border-radius: 10px; overflow: hidden; background: {C_BG_ELEVATED};"
             ),
 
             div {
-                style: "display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;",
-                div {
-                    style: "min-width: 0; display: flex; flex-direction: column; gap: 3px;",
-                    span {
-                        style: format!("font-size: 10px; font-weight: 700; letter-spacing: 0.08em; color: {C_TEXT_MUTED}; text-transform: uppercase;"),
-                        "Assembly metadata"
-                    }
-                    span {
-                        style: format!("font-size: 13px; font-weight: 700; color: {C_TEXT_PRIMARY}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"),
-                        "{display_or_fallback(&metadata.assembly_name, &assembly_name)}"
-                    }
-                    span {
-                        style: format!("font-size: 10px; color: {C_TEXT_MUTED}; font-family: {FONT_MONO}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"),
-                        "{assembly_path}"
-                    }
-                }
-                div {
-                    style: "display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; min-width: 180px;",
-                    MetadataBadge { label: "Types".to_string(), value: class_count.to_string() }
-                    MetadataBadge { label: "Methods".to_string(), value: methods_count.to_string() }
-                    MetadataBadge { label: "NS".to_string(), value: namespace_count.to_string() }
-                    MetadataBadge { label: "Refs".to_string(), value: references_count.to_string() }
-                    MetadataBadge { label: "Res".to_string(), value: resources_count.to_string() }
-                    MetadataBadge { label: "Attr".to_string(), value: attributes_count.to_string() }
-                }
-            }
+                style: format!(
+                    "padding: 8px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid {C_BORDER}; background: rgba(255,255,255,0.015);"
+                ),
 
-            MetadataSection {
-                section_key: "overview".to_string(),
-                title: "Overview".to_string(),
-                count_label: None,
-                collapsed_sections,
                 div {
-                    style: "display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;",
-                    MetadataField { label: "Assembly name".to_string(), value: metadata_value(metadata.assembly_name.as_str()) }
-                    MetadataField { label: "Version".to_string(), value: optional_value(metadata.version.as_deref()) }
-                    MetadataField {
-                        label: target_framework_label(&metadata).to_string(),
-                        value: target_framework_value(&metadata),
-                    }
-                    MetadataField { label: "Runtime".to_string(), value: optional_value(metadata.runtime_version.as_deref()) }
-                    MetadataField { label: "Architecture".to_string(), value: optional_value(metadata.architecture.as_deref()) }
-                    MetadataField { label: "Module kind".to_string(), value: optional_value(metadata.module_kind.as_deref()) }
-                    MetadataField { label: "Culture".to_string(), value: optional_value(metadata.culture.as_deref()) }
-                    MetadataField { label: "Public key token".to_string(), value: optional_value(metadata.public_key_token.as_deref()) }
-                    MetadataField { label: "Entry point".to_string(), value: optional_value(metadata.entry_point.as_deref()) }
-                    MetadataField { label: "MVID".to_string(), value: optional_value(metadata.mvid.as_deref()) }
-                    MetadataFieldWide { label: "Full name".to_string(), value: metadata_value(metadata.full_name.as_str()) }
-                }
-            }
+                    style: "display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; flex-wrap: wrap;",
 
-            MetadataSection {
-                section_key: "modules".to_string(),
-                title: "Modules".to_string(),
-                count_label: Some(modules_count.to_string()),
-                collapsed_sections,
-                if metadata.modules.is_empty() {
-                    MetadataEmpty { message: "No module metadata exposed by the worker.".to_string() }
-                } else {
-                    for module in metadata.modules.iter() {
-                        MetadataListCard {
-                            title: module.name.clone(),
-                            subtitle: optional_value(module.file_name.as_deref()),
-                            rows: vec![
-                                ("Runtime".to_string(), optional_value(module.runtime_version.as_deref())),
-                                ("Architecture".to_string(), optional_value(module.architecture.as_deref())),
-                                ("Kind".to_string(), optional_value(module.module_kind.as_deref())),
-                                ("MVID".to_string(), optional_value(module.mvid.as_deref())),
-                            ],
+                    div {
+                        style: "min-width: 0; display: flex; flex-direction: column; gap: 3px; flex: 1 1 180px;",
+                        span {
+                            style: format!("font-size: 9px; font-weight: 700; letter-spacing: 0.1em; color: {C_TEXT_MUTED}; text-transform: uppercase;"),
+                            "Assembly metadata"
+                        }
+                        span {
+                            style: format!("font-size: 12px; font-weight: 700; color: {C_TEXT_PRIMARY}; line-height: 1.25; word-break: break-word;"),
+                            "{display_name}"
+                        }
+                        span {
+                            style: format!("font-size: 9px; color: {C_TEXT_MUTED}; font-family: {FONT_MONO}; line-height: 1.35; word-break: break-all;"),
+                            "{assembly_path}"
                         }
                     }
                 }
             }
 
-            MetadataSection {
-                section_key: "references".to_string(),
-                title: "Assembly references".to_string(),
-                count_label: Some(references_count.to_string()),
-                collapsed_sections,
-                if metadata.assembly_references.is_empty() {
-                    MetadataEmpty { message: "No assembly references were found.".to_string() }
-                } else {
-                    for reference in metadata.assembly_references.iter() {
-                        MetadataListCard {
-                            title: reference.name.clone(),
-                            subtitle: optional_value(reference.version.as_deref()),
-                            rows: vec![
-                                ("Full name".to_string(), metadata_value(reference.full_name.as_str())),
-                                ("Culture".to_string(), optional_value(reference.culture.as_deref())),
-                                ("Public key token".to_string(), optional_value(reference.public_key_token.as_deref())),
-                            ],
+            div {
+                style: "padding: 8px; display: flex; flex-direction: column; gap: 6px;",
+
+                MetadataSection {
+                    section_key: "overview".to_string(),
+                    title: "Overview".to_string(),
+                    count_label: None,
+                    collapsed_sections,
+                    div {
+                        style: "display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;",
+                        MetadataField { label: "Assembly name".to_string(), value: metadata_value(metadata.assembly_name.as_str()) }
+                        MetadataField { label: "Version".to_string(), value: optional_value(metadata.version.as_deref()) }
+                        MetadataField {
+                            label: target_framework_label(&metadata).to_string(),
+                            value: target_framework_value(&metadata),
+                        }
+                        MetadataField { label: "Runtime".to_string(), value: optional_value(metadata.runtime_version.as_deref()) }
+                        MetadataField { label: "Architecture".to_string(), value: optional_value(metadata.architecture.as_deref()) }
+                        MetadataField { label: "Module kind".to_string(), value: optional_value(metadata.module_kind.as_deref()) }
+                        MetadataField { label: "Culture".to_string(), value: optional_value(metadata.culture.as_deref()) }
+                        MetadataField { label: "Public key token".to_string(), value: optional_value(metadata.public_key_token.as_deref()) }
+                        MetadataField { label: "Entry point".to_string(), value: optional_value(metadata.entry_point.as_deref()) }
+                        MetadataField { label: "MVID".to_string(), value: optional_value(metadata.mvid.as_deref()) }
+                        MetadataFieldWide { label: "Full name".to_string(), value: metadata_value(metadata.full_name.as_str()) }
+                    }
+                }
+
+                MetadataSection {
+                    section_key: "modules".to_string(),
+                    title: "Modules".to_string(),
+                    count_label: Some(modules_count.to_string()),
+                    collapsed_sections,
+                    if metadata.modules.is_empty() {
+                        MetadataEmpty { message: "No module metadata exposed by the worker.".to_string() }
+                    } else {
+                        for module in metadata.modules.iter() {
+                            MetadataListCard {
+                                title: display_or_fallback(&module.name, "Unnamed module"),
+                                subtitle: optional_value(module.file_name.as_deref()),
+                                rows: vec![
+                                    ("Runtime".to_string(), optional_value(module.runtime_version.as_deref())),
+                                    ("Architecture".to_string(), optional_value(module.architecture.as_deref())),
+                                    ("Kind".to_string(), optional_value(module.module_kind.as_deref())),
+                                    ("MVID".to_string(), optional_value(module.mvid.as_deref())),
+                                ],
+                            }
                         }
                     }
                 }
-            }
 
-            MetadataSection {
-                section_key: "resources".to_string(),
-                title: "Manifest resources".to_string(),
-                count_label: Some(resources_count.to_string()),
-                collapsed_sections,
-                if metadata.resources.is_empty() {
-                    MetadataEmpty { message: "No manifest resources were found.".to_string() }
-                } else {
-                    for resource in metadata.resources.iter() {
-                        ResourceCard { resource: resource.clone() }
+                MetadataSection {
+                    section_key: "references".to_string(),
+                    title: "Assembly references".to_string(),
+                    count_label: Some(references_count.to_string()),
+                    collapsed_sections,
+                    if metadata.assembly_references.is_empty() {
+                        MetadataEmpty { message: "No assembly references were found.".to_string() }
+                    } else {
+                        for reference in metadata.assembly_references.iter() {
+                            MetadataListCard {
+                                title: display_or_fallback(&reference.name, "Unnamed reference"),
+                                subtitle: optional_value(reference.version.as_deref()),
+                                rows: vec![
+                                    ("Full name".to_string(), metadata_value(reference.full_name.as_str())),
+                                    ("Culture".to_string(), optional_value(reference.culture.as_deref())),
+                                    ("Public key token".to_string(), optional_value(reference.public_key_token.as_deref())),
+                                ],
+                            }
+                        }
                     }
                 }
-            }
 
-            MetadataSection {
-                section_key: "attributes".to_string(),
-                title: "Assembly attributes".to_string(),
-                count_label: Some(attributes_count.to_string()),
-                collapsed_sections,
-                if metadata.custom_attributes.is_empty() {
-                    MetadataEmpty { message: "No custom assembly attributes were found.".to_string() }
-                } else {
-                    for attribute in metadata.custom_attributes.iter() {
-                        AttributeCard { attribute: attribute.clone() }
+                MetadataSection {
+                    section_key: "resources".to_string(),
+                    title: "Manifest resources".to_string(),
+                    count_label: Some(resources_count.to_string()),
+                    collapsed_sections,
+                    if metadata.resources.is_empty() {
+                        MetadataEmpty { message: "No manifest resources were found.".to_string() }
+                    } else {
+                        for resource in metadata.resources.iter() {
+                            ResourceCard { resource: resource.clone() }
+                        }
                     }
                 }
-            }
-        }
-    }
-}
 
-#[component]
-fn MetadataBadge(label: String, value: String) -> Element {
-    rsx! {
-        div {
-            style: format!(
-                "padding: 6px 8px; border-radius: 8px; border: 1px solid {C_BORDER}; \
-                 background: {C_BG_ELEVATED}; display: flex; flex-direction: column; gap: 2px;"
-            ),
-            span {
-                style: format!("font-size: 9px; color: {C_TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.08em;"),
-                "{label}"
-            }
-            span {
-                style: format!("font-size: 12px; font-weight: 700; color: {C_TEXT_PRIMARY};"),
-                "{value}"
+                MetadataSection {
+                    section_key: "attributes".to_string(),
+                    title: "Assembly attributes".to_string(),
+                    count_label: Some(attributes_count.to_string()),
+                    collapsed_sections,
+                    if metadata.custom_attributes.is_empty() {
+                        MetadataEmpty { message: "No custom assembly attributes were found.".to_string() }
+                    } else {
+                        for attribute in metadata.custom_attributes.iter() {
+                            AttributeCard { attribute: attribute.clone() }
+                        }
+                    }
+                }
             }
         }
     }
@@ -210,17 +201,17 @@ fn MetadataSection(
     children: Element,
 ) -> Element {
     let is_open = !collapsed_sections.read().contains(&section_key);
-    let chevron = if is_open { "v" } else { ">" };
     let toggle_key = section_key.clone();
+    let chevron_rotation = if is_open { "90deg" } else { "0deg" };
 
     rsx! {
         div {
             style: "display: flex; flex-direction: column; gap: 8px;",
             button {
                 style: format!(
-                    "display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px; \
-                     border-radius: 8px; border: 1px solid {C_BORDER}; background: {C_BG_BASE}; \
-                     color: {C_TEXT_PRIMARY}; cursor: pointer;"
+                    "display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; border-radius: 8px; border: 1px solid {}; background: {}; color: {C_TEXT_PRIMARY}; cursor: pointer; text-align: left; transition: all 120ms ease;",
+                    if is_open { C_BORDER_ACCENT } else { C_BORDER },
+                    if is_open { C_BG_ELEVATED } else { C_BG_BASE },
                 ),
                 onclick: move |_| {
                     let mut set = collapsed_sections.write();
@@ -230,17 +221,36 @@ fn MetadataSection(
                         set.insert(toggle_key.clone());
                     }
                 },
-                span {
-                    style: format!("font-size: 10px; color: {C_TEXT_MUTED}; width: 10px; text-align: center;"),
-                    "{chevron}"
+
+                div {
+                    style: "width: 10px; flex-shrink: 0; display: flex; align-items: center; justify-content: center;",
+                    svg {
+                        width: "7",
+                        height: "7",
+                        view_box: "0 0 8 8",
+                        fill: "none",
+                        stroke: C_TEXT_MUTED,
+                        stroke_width: "1.5",
+                        stroke_linecap: "round",
+                        stroke_linejoin: "round",
+                        style: format!("transform: rotate({chevron_rotation}); transition: transform 120ms ease;"),
+                        polyline { points: "2,1.5 5.5,4 2,6.5" }
+                    }
                 }
-                span {
-                    style: format!("font-size: 11px; font-weight: 700; color: {C_TEXT_PRIMARY}; text-transform: uppercase; letter-spacing: 0.06em;"),
-                    "{title}"
+
+                div {
+                    style: "display: flex; align-items: center; min-width: 0; flex: 1;",
+                    span {
+                        style: format!("font-size: 10px; font-weight: 700; color: {C_TEXT_PRIMARY}; text-transform: uppercase; letter-spacing: 0.08em;"),
+                        "{title}"
+                    }
                 }
+
                 if let Some(count) = count_label {
                     span {
-                        style: format!("margin-left: auto; font-size: 10px; color: {C_TEXT_MUTED};"),
+                        style: format!(
+                            "margin-left: auto; flex-shrink: 0; min-width: 20px; padding: 1px 6px; border-radius: 999px; border: 1px solid {C_BORDER}; background: rgba(16,17,19,0.72); font-size: 9px; color: {C_TEXT_SECONDARY}; text-align: center;"
+                        ),
                         "{count}"
                     }
                 }
@@ -248,7 +258,9 @@ fn MetadataSection(
 
             if is_open {
                 div {
-                    style: "display: flex; flex-direction: column; gap: 8px;",
+                    style: format!(
+                        "padding: 6px; border-radius: 8px; border: 1px solid {C_BORDER}; background: rgba(255,255,255,0.015); display: flex; flex-direction: column; gap: 6px;"
+                    ),
                     {children}
                 }
             }
@@ -261,15 +273,14 @@ fn MetadataField(label: String, value: String) -> Element {
     rsx! {
         div {
             style: format!(
-                "padding: 8px 9px; border-radius: 8px; border: 1px solid {C_BORDER}; \
-                 background: {C_BG_ELEVATED}; display: flex; flex-direction: column; gap: 4px; min-width: 0;"
+                "padding: 7px 8px; border-radius: 8px; border: 1px solid {C_BORDER}; background: {C_BG_BASE}; display: flex; flex-direction: column; gap: 4px; min-width: 0;"
             ),
             span {
-                style: format!("font-size: 9px; color: {C_TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.08em;"),
+                style: format!("font-size: 8px; color: {C_TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.06em;"),
                 "{label}"
             }
             span {
-                style: format!("font-size: 11px; color: {C_TEXT_PRIMARY}; font-family: {FONT_MONO}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"),
+                style: format!("font-size: 10px; line-height: 1.35; color: {C_TEXT_PRIMARY}; font-family: {FONT_MONO}; white-space: normal; word-break: break-word;"),
                 "{value}"
             }
         }
@@ -281,15 +292,14 @@ fn MetadataFieldWide(label: String, value: String) -> Element {
     rsx! {
         div {
             style: format!(
-                "grid-column: 1 / -1; padding: 8px 9px; border-radius: 8px; border: 1px solid {C_BORDER}; \
-                 background: {C_BG_ELEVATED}; display: flex; flex-direction: column; gap: 4px; min-width: 0;"
+                "grid-column: 1 / -1; padding: 7px 8px; border-radius: 8px; border: 1px solid {C_BORDER}; background: {C_BG_BASE}; display: flex; flex-direction: column; gap: 4px; min-width: 0;"
             ),
             span {
-                style: format!("font-size: 9px; color: {C_TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.08em;"),
+                style: format!("font-size: 8px; color: {C_TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.06em;"),
                 "{label}"
             }
             span {
-                style: format!("font-size: 11px; color: {C_TEXT_PRIMARY}; font-family: {FONT_MONO}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"),
+                style: format!("font-size: 10px; line-height: 1.35; color: {C_TEXT_PRIMARY}; font-family: {FONT_MONO}; white-space: normal; word-break: break-word;"),
                 "{value}"
             }
         }
@@ -301,8 +311,7 @@ fn MetadataEmpty(message: String) -> Element {
     rsx! {
         div {
             style: format!(
-                "padding: 10px; border-radius: 8px; border: 1px dashed {C_BORDER}; \
-                 color: {C_TEXT_MUTED}; font-size: 11px; background: {C_BG_ELEVATED};"
+                "padding: 8px; border-radius: 8px; border: 1px dashed {C_BORDER_ACCENT}; color: {C_TEXT_MUTED}; font-size: 10px; line-height: 1.4; background: rgba(16,17,19,0.54);"
             ),
             "{message}"
         }
@@ -314,30 +323,31 @@ fn MetadataListCard(title: String, subtitle: String, rows: Vec<(String, String)>
     rsx! {
         div {
             style: format!(
-                "padding: 9px 10px; border-radius: 8px; border: 1px solid {C_BORDER}; \
-                 background: {C_BG_ELEVATED}; display: flex; flex-direction: column; gap: 6px;"
+                "padding: 8px; border-radius: 8px; border: 1px solid {C_BORDER}; background: {C_BG_BASE}; display: flex; flex-direction: column; gap: 6px;"
             ),
             div {
-                style: "display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0;",
+                style: "display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0;",
                 span {
-                    style: format!("font-size: 11px; font-weight: 700; color: {C_TEXT_PRIMARY}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"),
+                    style: format!("font-size: 10px; font-weight: 700; color: {C_TEXT_PRIMARY}; line-height: 1.35; word-break: break-word;"),
                     "{title}"
                 }
                 span {
-                    style: format!("font-size: 10px; color: {C_TEXT_MUTED}; font-family: {FONT_MONO}; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"),
+                    style: format!("font-size: 9px; color: {C_TEXT_MUTED}; font-family: {FONT_MONO}; text-align: right; line-height: 1.35; word-break: break-word;"),
                     "{subtitle}"
                 }
             }
             for (label, value) in rows.iter() {
                 div {
                     key: "{title}-{label}",
-                    style: "display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;",
+                    style: format!(
+                        "display: grid; grid-template-columns: minmax(78px, 100px) 1fr; gap: 10px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.04);"
+                    ),
                     span {
-                        style: format!("font-size: 10px; color: {C_TEXT_MUTED}; min-width: 84px;"),
+                        style: format!("font-size: 9px; color: {C_TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.05em;"),
                         "{label}"
                     }
                     span {
-                        style: format!("font-size: 10px; color: {C_TEXT_PRIMARY}; font-family: {FONT_MONO}; text-align: right; word-break: break-word;"),
+                        style: format!("font-size: 9px; line-height: 1.4; color: {C_TEXT_PRIMARY}; font-family: {FONT_MONO}; white-space: normal; word-break: break-word;"),
                         "{value}"
                     }
                 }
@@ -350,8 +360,8 @@ fn MetadataListCard(title: String, subtitle: String, rows: Vec<(String, String)>
 fn ResourceCard(resource: ResourceMetadataEntry) -> Element {
     rsx! {
         MetadataListCard {
-            title: resource.name.clone(),
-            subtitle: resource.resource_type.clone(),
+            title: display_or_fallback(&resource.name, "Unnamed resource"),
+            subtitle: display_or_fallback(&resource.resource_type, "Unknown"),
             rows: vec![
                 ("Attributes".to_string(), optional_value(resource.attributes.as_deref())),
                 ("Size".to_string(), format_bytes(resource.size_bytes)),
@@ -366,25 +376,28 @@ fn AttributeCard(attribute: AttributeMetadataEntry) -> Element {
     rsx! {
         div {
             style: format!(
-                "padding: 9px 10px; border-radius: 8px; border: 1px solid {C_BORDER}; \
-                 background: {C_BG_ELEVATED}; display: flex; flex-direction: column; gap: 6px;"
+                "padding: 8px; border-radius: 8px; border: 1px solid {C_BORDER}; background: {C_BG_BASE}; display: flex; flex-direction: column; gap: 5px;"
             ),
             span {
-                style: format!("font-size: 11px; font-weight: 700; color: {C_TEXT_PRIMARY}; font-family: {FONT_MONO}; word-break: break-word;"),
+                style: format!("font-size: 10px; line-height: 1.35; font-weight: 700; color: {C_TEXT_PRIMARY}; font-family: {FONT_MONO}; word-break: break-word;"),
                 "{attribute.attribute_type}"
             }
             span {
-                style: format!("font-size: 10px; color: {C_TEXT_MUTED}; word-break: break-word;"),
+                style: format!("font-size: 9px; line-height: 1.4; color: {C_TEXT_SECONDARY}; word-break: break-word;"),
                 "{optional_value(attribute.summary.as_deref())}"
             }
         }
     }
 }
 
+fn has_text(value: Option<&str>) -> bool {
+    value.is_some_and(|value| !value.trim().is_empty())
+}
+
 fn optional_value(value: Option<&str>) -> String {
     value
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or("—")
+        .unwrap_or("-")
         .to_string()
 }
 
@@ -418,7 +431,7 @@ fn target_framework_label(metadata: &AssemblyMetadataEntry) -> &'static str {
 
 fn metadata_value(value: &str) -> String {
     if value.trim().is_empty() {
-        "—".to_string()
+        "-".to_string()
     } else {
         value.to_string()
     }
@@ -434,7 +447,7 @@ fn display_or_fallback(primary: &str, fallback: &str) -> String {
 
 fn format_bytes(size: Option<i64>) -> String {
     let Some(size) = size else {
-        return "—".to_string();
+        return "-".to_string();
     };
 
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
@@ -455,8 +468,22 @@ fn format_bytes(size: Option<i64>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{format_bytes, has_metadata, target_framework_label, target_framework_value};
+    use super::{
+        default_collapsed_metadata_sections, format_bytes, has_metadata, target_framework_label,
+        target_framework_value,
+    };
     use crate::ipc::AssemblyMetadataEntry;
+
+    #[test]
+    fn default_collapsed_sections_starts_with_every_section_closed() {
+        let sections = default_collapsed_metadata_sections();
+
+        assert!(sections.contains("overview"));
+        assert!(sections.contains("modules"));
+        assert!(sections.contains("references"));
+        assert!(sections.contains("resources"));
+        assert!(sections.contains("attributes"));
+    }
 
     #[test]
     fn has_metadata_returns_false_for_empty_entry() {
@@ -511,7 +538,7 @@ mod tests {
 
     #[test]
     fn format_bytes_handles_missing_sizes() {
-        assert_eq!(format_bytes(None), "—");
+        assert_eq!(format_bytes(None), "-");
     }
 
     #[test]

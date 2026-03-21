@@ -148,6 +148,8 @@ pub struct AttributeMetadataEntry {
 #[serde(rename_all = "camelCase")]
 pub struct TypeEntry {
     pub type_name: String,
+    #[serde(default)]
+    pub kind: String,
     pub methods: Vec<MethodEntry>,
 }
 
@@ -255,7 +257,6 @@ pub struct DataFlowChainEntry {
     pub description: String,
     pub severity: String,
     pub pattern: String,
-    pub confidence: f64,
     pub source_variable: Option<String>,
     pub method_location: String,
     pub is_cross_method: Option<bool>,

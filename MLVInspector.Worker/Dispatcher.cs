@@ -93,14 +93,12 @@ internal sealed class Dispatcher
                     typeMethods.Add(entry);
                 }
 
-                if (typeMethods.Count > 0)
+                types.Add(new TypeEntry
                 {
-                    types.Add(new TypeEntry
-                    {
-                        TypeName = type.FullName,
-                        Methods = typeMethods,
-                    });
-                }
+                    TypeName = type.FullName,
+                    Kind = ClassifyTypeKind(type),
+                    Methods = typeMethods,
+                });
             }
         }
 
@@ -112,6 +110,34 @@ internal sealed class Dispatcher
             Types = types,
         };
     }
+
+    private static string ClassifyTypeKind(TypeDefinition type)
+    {
+        if (type.IsInterface)
+        {
+            return "interface";
+        }
+
+        if (type.IsEnum)
+        {
+            return "enum";
+        }
+
+        if (IsDelegate(type))
+        {
+            return "delegate";
+        }
+
+        if (type.IsValueType)
+        {
+            return "struct";
+        }
+
+        return "class";
+    }
+
+    private static bool IsDelegate(TypeDefinition type)
+        => type.BaseType?.FullName is "System.MulticastDelegate" or "System.Delegate";
 
     public ScanPayload Scan(ScanParams p)
     {
@@ -256,7 +282,10 @@ internal sealed class Dispatcher
                 }
                 else
                 {
-                    source = decompiler.DecompileTypeAsString(fullName);
+                    (source, sourceSpans) = DecompileTypeDocument(
+                        decompiler,
+                        fullName,
+                        requestedTypeName);
                 }
             }
             else
@@ -845,6 +874,24 @@ internal sealed class Dispatcher
         return (source, sourceSpans);
     }
 
+    private static (string Source, List<SourceSpanEntry> SourceSpans) DecompileTypeDocument(
+        CSharpDecompiler decompiler,
+        FullTypeName fullTypeName,
+        string typeName)
+    {
+        var syntaxTree = decompiler.DecompileType(fullTypeName);
+        var source = RenderSyntaxTreeWithLocations(syntaxTree);
+        var sourceSpans = BuildSourceSpans(
+            decompiler
+                .CreateSequencePoints(syntaxTree)
+                .Values
+                .SelectMany(points => points),
+            typeName,
+            null);
+
+        return (source, sourceSpans);
+    }
+
     private static string RenderSyntaxTreeWithLocations(SyntaxTree syntaxTree)
     {
         using var writer = new StringWriter();
@@ -1249,7 +1296,6 @@ internal sealed class Dispatcher
         Description = d.Description ?? "",
         Severity = d.Severity ?? "",
         Pattern = d.Pattern ?? "",
-        Confidence = d.Confidence,
         SourceVariable = d.SourceVariable,
         MethodLocation = d.MethodLocation ?? "",
         IsCrossMethod = d.IsCrossMethod,

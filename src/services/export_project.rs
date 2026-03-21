@@ -560,10 +560,12 @@ mod tests {
                 types: vec![
                     crate::ipc::TypeEntry {
                         type_name: "Example.Core.Entry".to_string(),
+                        kind: "class".to_string(),
                         methods: Vec::new(),
                     },
                     crate::ipc::TypeEntry {
                         type_name: "Example.Core.Entry`1".to_string(),
+                        kind: "class".to_string(),
                         methods: Vec::new(),
                     },
                 ],

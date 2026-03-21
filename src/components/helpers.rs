@@ -1,7 +1,7 @@
 /// Pure helper functions for data extraction and UI utilities.
 use std::collections::BTreeMap;
 
-use crate::ipc::{DecompileSourceSpan, FindingEntry};
+use crate::ipc::{DecompileSourceSpan, FindingEntry, TypeEntry};
 use crate::types::AnalysisResult;
 
 use super::view_models::{
@@ -66,44 +66,57 @@ pub fn extract_findings(result: &AnalysisResult) -> Vec<UiFinding> {
         .collect()
 }
 
-pub fn group_methods_by_namespace(methods: &[UiMethod]) -> Vec<UiNamespaceGroup> {
-    let mut namespaces: BTreeMap<String, BTreeMap<String, Vec<UiMethod>>> = BTreeMap::new();
+pub fn group_types_by_namespace(
+    types: &[TypeEntry],
+    methods: &[UiMethod],
+) -> Vec<UiNamespaceGroup> {
+    let mut namespaces: BTreeMap<String, BTreeMap<String, UiTypeGroup>> = BTreeMap::new();
+
+    for ty in types {
+        let full_type_name = ty.type_name.clone();
+        let namespace = namespace_for_type(&full_type_name);
+
+        namespaces.entry(namespace).or_default().insert(
+            full_type_name.clone(),
+            UiTypeGroup {
+                full_type_name: full_type_name.clone(),
+                display_name: display_name_for_type(&full_type_name),
+                kind: normalize_type_kind(&ty.kind),
+                methods: Vec::new(),
+            },
+        );
+    }
 
     for method in methods {
         let full_type_name = method.type_name.clone();
-        let (namespace, _class) = full_type_name
-            .rsplit_once('.')
-            .map(|(ns, cls)| (ns.to_string(), cls.to_string()))
-            .unwrap_or_else(|| ("(global)".to_string(), full_type_name.clone()));
-
-        namespaces
+        let namespace = namespace_for_type(&full_type_name);
+        let entry = namespaces
             .entry(namespace)
             .or_default()
-            .entry(full_type_name)
-            .or_default()
-            .push(method.clone());
+            .entry(full_type_name.clone())
+            .or_insert_with(|| UiTypeGroup {
+                full_type_name: full_type_name.clone(),
+                display_name: display_name_for_type(&full_type_name),
+                kind: "class".to_string(),
+                methods: Vec::new(),
+            });
+        entry.methods.push(method.clone());
     }
 
     namespaces
         .into_iter()
         .map(|(namespace_name, type_map)| {
-            let types = type_map
-                .into_iter()
-                .map(|(full_type_name, mut methods)| {
-                    methods.sort_by(|a, b| a.method_name.cmp(&b.method_name));
-                    let display_name = full_type_name
-                        .rsplit('.')
-                        .next()
-                        .unwrap_or(&full_type_name)
-                        .to_string();
-
-                    UiTypeGroup {
-                        full_type_name,
-                        display_name,
-                        methods,
-                    }
+            let mut types = type_map
+                .into_values()
+                .map(|mut group| {
+                    group
+                        .methods
+                        .sort_by(|a, b| a.method_name.cmp(&b.method_name));
+                    group
                 })
-                .collect();
+                .collect::<Vec<_>>();
+
+            types.sort_by(|a, b| a.display_name.cmp(&b.display_name));
 
             UiNamespaceGroup {
                 namespace_name,
@@ -111,6 +124,28 @@ pub fn group_methods_by_namespace(methods: &[UiMethod]) -> Vec<UiNamespaceGroup>
             }
         })
         .collect()
+}
+
+fn namespace_for_type(full_type_name: &str) -> String {
+    full_type_name
+        .rsplit_once('.')
+        .map(|(ns, _)| ns.to_string())
+        .unwrap_or_else(|| "(global)".to_string())
+}
+
+fn display_name_for_type(full_type_name: &str) -> String {
+    full_type_name
+        .rsplit('.')
+        .next()
+        .unwrap_or(full_type_name)
+        .to_string()
+}
+
+fn normalize_type_kind(kind: &str) -> String {
+    match kind.trim().to_ascii_lowercase().as_str() {
+        "struct" | "interface" | "enum" | "delegate" | "class" => kind.trim().to_ascii_lowercase(),
+        _ => "class".to_string(),
+    }
 }
 
 pub fn resolve_finding_target(
@@ -621,14 +656,33 @@ fn search_lines_match(source_line: &str, snippet_line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        highlighted_csharp_lines, highlighted_csharp_lines_from_source_spans,
-        parse_il_offset_from_snippet, parse_il_offsets_from_snippet, resolve_finding_target,
-        resolve_method_reference, should_retry_decompile_source,
+        group_types_by_namespace, highlighted_csharp_lines,
+        highlighted_csharp_lines_from_source_spans, parse_il_offset_from_snippet,
+        parse_il_offsets_from_snippet, resolve_finding_target, resolve_method_reference,
+        should_retry_decompile_source,
     };
     use crate::{
         components::view_models::{UiFinding, UiFindingMethodSpan, UiFindingNavigation, UiMethod},
-        ipc::DecompileSourceSpan,
+        ipc::{DecompileSourceSpan, TypeEntry},
     };
+
+    #[test]
+    fn group_types_by_namespace_includes_structs_without_methods() {
+        let types = vec![TypeEntry {
+            type_name: "Demo.Models.Point".to_string(),
+            kind: "struct".to_string(),
+            methods: Vec::new(),
+        }];
+
+        let groups = group_types_by_namespace(&types, &[]);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].namespace_name, "Demo.Models");
+        assert_eq!(groups[0].types.len(), 1);
+        assert_eq!(groups[0].types[0].display_name, "Point");
+        assert_eq!(groups[0].types[0].kind, "struct");
+        assert!(groups[0].types[0].methods.is_empty());
+    }
 
     #[test]
     fn parse_il_offset_from_snippet_handles_hex_offsets() {

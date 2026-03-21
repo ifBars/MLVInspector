@@ -5,8 +5,10 @@ use dioxus::prelude::*;
 
 use crate::state::AppState;
 
-use super::explorer_metadata::{has_metadata, ExplorerMetadataCard};
-use super::helpers::{extract_methods, group_methods_by_namespace, method_tab_id, type_tab_id};
+use super::explorer_metadata::{
+    default_collapsed_metadata_sections, has_metadata, ExplorerMetadataCard,
+};
+use super::helpers::{extract_methods, group_types_by_namespace, method_tab_id, type_tab_id};
 use super::theme::{
     C_ACCENT_GREEN, C_BG_BASE, C_BG_ELEVATED, C_BG_SURFACE, C_BORDER, C_BORDER_ACCENT,
     C_TEXT_MUTED, C_TEXT_PRIMARY, C_TEXT_SECONDARY, FONT_MONO,
@@ -25,12 +27,12 @@ pub fn ExplorerPanel(
     let mut collapsed_assemblies = use_signal(BTreeSet::<String>::new);
     let mut collapsed_namespaces = use_signal(BTreeSet::<String>::new);
     let mut collapsed_types = use_signal(BTreeSet::<String>::new);
-    let collapsed_metadata_sections = use_signal(BTreeSet::<String>::new);
+    let collapsed_metadata_sections = use_signal(default_collapsed_metadata_sections);
 
     let selected_id = state.selected_id.read().clone();
     let assemblies = state.assemblies.read().clone();
 
-    let (methods, assembly_metadata) = selected_id
+    let (methods, grouped_types, assembly_metadata) = selected_id
         .as_ref()
         .and_then(|id| {
             let explore_key = format!("{id}::explore");
@@ -40,18 +42,20 @@ pub fn ExplorerPanel(
                     .as_ref()
                     .map(|payload| payload.assembly_metadata.clone())
                     .unwrap_or_default();
-                (extract_methods(result), metadata)
+                let methods = extract_methods(result);
+                let grouped_types = result
+                    .explore
+                    .as_ref()
+                    .map(|payload| group_types_by_namespace(&payload.types, &methods))
+                    .unwrap_or_default();
+                (methods, grouped_types, metadata)
             })
         })
         .unwrap_or_default();
-    let grouped_methods = group_methods_by_namespace(&methods);
 
     let methods_count = methods.len();
-    let class_count = grouped_methods
-        .iter()
-        .map(|ns| ns.types.len())
-        .sum::<usize>();
-    let namespace_count = grouped_methods.len();
+    let type_count = grouped_types.iter().map(|ns| ns.types.len()).sum::<usize>();
+    let namespace_count = grouped_types.len();
 
     let active_tab = {
         let id = active_tab_id.read().clone();
@@ -90,7 +94,7 @@ pub fn ExplorerPanel(
                 span { "Explorer" }
                 span {
                     class: "badge",
-                    "{assemblies_count} asm / {class_count} cls / {namespace_count} ns"
+                    "{assemblies_count} asm / {type_count} types / {namespace_count} ns"
                 }
             }
 
@@ -203,9 +207,6 @@ pub fn ExplorerPanel(
                                 assembly_name: asm.name.clone(),
                                 assembly_path: asm.path.clone(),
                                 metadata: assembly_metadata.clone(),
-                                methods_count,
-                                class_count,
-                                namespace_count,
                                 collapsed_sections: collapsed_metadata_sections,
                             }
                         }
@@ -220,11 +221,11 @@ pub fn ExplorerPanel(
                     }
                     span {
                         style: format!("font-size: 10px; color: {C_TEXT_MUTED};"),
-                        "{methods_count} methods"
+                        "{type_count} types / {methods_count} methods"
                     }
                 }
 
-                if methods.is_empty() {
+                if grouped_types.is_empty() {
                     div {
                         class: "empty-state",
                         svg {
@@ -277,7 +278,7 @@ pub fn ExplorerPanel(
                             }
 
                             if !asm_collapsed {
-                                for namespace in grouped_methods.iter() {
+                                for namespace in grouped_types.iter() {
                                     {
                                         let namespace_key = namespace.namespace_name.clone();
                                         let namespace_collapsed =
@@ -408,6 +409,15 @@ pub fn ExplorerPanel(
                                                                     },
                                                                     span {
                                                                         style: format!(
+                                                                            "flex-shrink: 0; padding: 1px 5px; border-radius: 999px; \
+                                                                             border: 1px solid {C_BORDER}; background: {C_BG_BASE}; \
+                                                                             font-size: 8px; font-weight: 700; letter-spacing: 0.06em; \
+                                                                             text-transform: uppercase; color: {C_TEXT_MUTED};"
+                                                                        ),
+                                                                        "{type_kind_short_label(&group.kind)}"
+                                                                    }
+                                                                    span {
+                                                                        style: format!(
                                                                             "font-size: 11px; font-weight: 700; \
                                                                              color: {C_TEXT_PRIMARY}; overflow: hidden; \
                                                                              text-overflow: ellipsis; white-space: nowrap;"
@@ -419,82 +429,93 @@ pub fn ExplorerPanel(
                                                                             "margin-left: auto; font-size: 10px; \
                                                                              color: {C_TEXT_MUTED};"
                                                                         ),
-                                                                        "{group.methods.len()}"
+                                                                        "{type_method_count_label(group.methods.len())}"
                                                                     }
                                                                 }
                                                             }
 
                                                             if !type_collapsed {
-                                                                for method in group.methods.iter() {
-                                                                    {
-                                                                        let key_name = format!(
-                                                                            "{}::{}",
-                                                                            method.type_name,
-                                                                            method.method_name
-                                                                        );
-                                                                        let m_type = method.type_name.clone();
-                                                                        let m_name = method.method_name.clone();
-                                                                        let is_selected =
-                                                                            selected_method_name.as_ref()
-                                                                                == Some(&key_name);
-                                                                        let item_class = if is_selected {
-                                                                            "method-item selected"
-                                                                        } else {
-                                                                            "method-item"
-                                                                        };
-                                                                        rsx! {
-                                                                            button {
-                                                                                key: "{key_name}",
-                                                                                class: "{item_class}",
-                                                                                style: "padding-left: 44px;",
-                                                                                onclick: move |_| {
-                                                                                    let tab_id =
-                                                                                        method_tab_id(&m_type, &m_name);
-                                                                                    {
-                                                                                        let mut tabs = open_tabs.write();
-                                                                                        if !tabs.iter().any(|tab| {
-                                                                                            tab.id == tab_id
-                                                                                        }) {
-                                                                                            tabs.push(IlTab {
-                                                                                                id: tab_id.clone(),
-                                                                                                kind: IlTabKind::Method,
-                                                                                                type_name: m_type.clone(),
-                                                                                                method_name: Some(
-                                                                                                    m_name.clone(),
-                                                                                                ),
-                                                                                                title: m_name.clone(),
-                                                                                                subtitle: m_type.clone(),
-                                                                                            });
+                                                                if group.methods.is_empty() {
+                                                                    div {
+                                                                        style: format!(
+                                                                            "margin: 0 8px 5px; width: calc(100% - 16px); padding: 6px 10px 6px 44px; \
+                                                                             border-radius: 8px; border: 1px dashed {C_BORDER}; color: {C_TEXT_MUTED}; \
+                                                                             background: rgba(255,255,255,0.015); font-size: 10px;"
+                                                                        ),
+                                                                        "No methods exposed for this {group.kind}."
+                                                                    }
+                                                                } else {
+                                                                    for method in group.methods.iter() {
+                                                                        {
+                                                                            let key_name = format!(
+                                                                                "{}::{}",
+                                                                                method.type_name,
+                                                                                method.method_name
+                                                                            );
+                                                                            let m_type = method.type_name.clone();
+                                                                            let m_name = method.method_name.clone();
+                                                                            let is_selected =
+                                                                                selected_method_name.as_ref()
+                                                                                    == Some(&key_name);
+                                                                            let item_class = if is_selected {
+                                                                                "method-item selected"
+                                                                            } else {
+                                                                                "method-item"
+                                                                            };
+                                                                            rsx! {
+                                                                                button {
+                                                                                    key: "{key_name}",
+                                                                                    class: "{item_class}",
+                                                                                    style: "padding-left: 44px;",
+                                                                                    onclick: move |_| {
+                                                                                        let tab_id =
+                                                                                            method_tab_id(&m_type, &m_name);
+                                                                                        {
+                                                                                            let mut tabs = open_tabs.write();
+                                                                                            if !tabs.iter().any(|tab| {
+                                                                                                tab.id == tab_id
+                                                                                            }) {
+                                                                                                tabs.push(IlTab {
+                                                                                                    id: tab_id.clone(),
+                                                                                                    kind: IlTabKind::Method,
+                                                                                                    type_name: m_type.clone(),
+                                                                                                    method_name: Some(
+                                                                                                        m_name.clone(),
+                                                                                                    ),
+                                                                                                    title: m_name.clone(),
+                                                                                                    subtitle: m_type.clone(),
+                                                                                                });
+                                                                                            }
                                                                                         }
+                                                                                        active_tab_id.set(Some(tab_id));
+                                                                                        selected_finding.set(None);
+                                                                                    },
+                                                                                    div {
+                                                                                        style: format!(
+                                                                                            "font-size: 12px; font-weight: 600; \
+                                                                                             font-family: {FONT_MONO}; \
+                                                                                             color: {}; overflow: hidden; \
+                                                                                             text-overflow: ellipsis; \
+                                                                                             white-space: nowrap;",
+                                                                                            if is_selected {
+                                                                                                C_ACCENT_GREEN
+                                                                                            } else {
+                                                                                                C_TEXT_PRIMARY
+                                                                                            }
+                                                                                        ),
+                                                                                        "{method.method_name}"
                                                                                     }
-                                                                                    active_tab_id.set(Some(tab_id));
-                                                                                    selected_finding.set(None);
-                                                                                },
-                                                                                div {
-                                                                                    style: format!(
-                                                                                        "font-size: 12px; font-weight: 600; \
-                                                                                         font-family: {FONT_MONO}; \
-                                                                                         color: {}; overflow: hidden; \
-                                                                                         text-overflow: ellipsis; \
-                                                                                         white-space: nowrap;",
-                                                                                        if is_selected {
-                                                                                            C_ACCENT_GREEN
-                                                                                        } else {
-                                                                                            C_TEXT_PRIMARY
-                                                                                        }
-                                                                                    ),
-                                                                                    "{method.method_name}"
-                                                                                }
-                                                                                div {
-                                                                                    style: format!(
-                                                                                        "font-size: 10px; \
-                                                                                         color: {C_TEXT_MUTED}; \
-                                                                                         margin-top: 3px; \
-                                                                                         overflow: hidden; \
-                                                                                         text-overflow: ellipsis; \
-                                                                                         white-space: nowrap;"
-                                                                                    ),
-                                                                                    "{method.type_name}"
+                                                                                    div {
+                                                                                        style: format!(
+                                                                                            "font-size: 10px; \
+                                                                                             color: {C_TEXT_MUTED}; \
+                                                                                             margin-top: 3px; \
+                                                                                             overflow: hidden; \
+                                                                                             text-overflow: ellipsis; \
+                                                                                             white-space: nowrap;"
+                                                                                        ),
+                                                                                        "{method.type_name}"
+                                                                                    }
                                                                                 }
                                                                             }
                                                                         }
@@ -514,10 +535,28 @@ pub fn ExplorerPanel(
                 } else {
                     div {
                         class: "empty-state",
-                        p { "Select an assembly to browse namespaces, classes, and methods" }
+                        p { "Select an assembly to browse namespaces, types, and methods" }
                     }
                 }
             }
         }
+    }
+}
+
+fn type_kind_short_label(kind: &str) -> &'static str {
+    match kind {
+        "struct" => "struct",
+        "interface" => "iface",
+        "enum" => "enum",
+        "delegate" => "delegate",
+        _ => "class",
+    }
+}
+
+fn type_method_count_label(count: usize) -> String {
+    if count == 1 {
+        "1 method".to_string()
+    } else {
+        format!("{count} methods")
     }
 }
