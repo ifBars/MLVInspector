@@ -294,6 +294,7 @@ pub fn App() -> Element {
             // ── Title bar ──────────────────────────────────────────────────────
             TitleBar {
                 active_overlay,
+                shortcut_settings,
                 show_scan_panel,
                 last_error,
                 open_tabs,

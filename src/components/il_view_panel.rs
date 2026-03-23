@@ -7,6 +7,9 @@ use crate::ipc::{DecompileParams, DecompilePayload};
 use crate::state::AppState;
 
 use super::csharp_highlight::highlight_csharp;
+use super::explorer_metadata::{
+    default_collapsed_metadata_sections, has_metadata, AssemblyMetadataView,
+};
 use super::helpers::{
     extract_findings, extract_methods, highlighted_csharp_lines,
     highlighted_csharp_lines_from_source_spans, is_compiler_generated_type_name, method_tab_id,
@@ -32,6 +35,7 @@ pub fn IlViewPanel(
     let mut view_mode = use_signal(|| ViewMode::Il);
     let mut csharp_cache: Signal<HashMap<String, DecompilePayload>> = use_signal(HashMap::new);
     let mut csharp_loading = use_signal(|| false);
+    let metadata_collapsed_sections = use_signal(default_collapsed_metadata_sections);
 
     // Trigger C# decompilation when switching to C# view or changing active tab
     use_effect(move || {
@@ -51,6 +55,9 @@ pub fn IlViewPanel(
         let Some(tab) = tabs.into_iter().find(|t| t.id == tab_id) else {
             return;
         };
+        if tab.kind == IlTabKind::AssemblyMetadata {
+            return;
+        }
         let Some(asm_id) = sel_id else {
             return;
         };
@@ -115,6 +122,29 @@ pub fn IlViewPanel(
 
     // Derive display data
     let selected_id = state.selected_id.read().clone();
+    let selected_assembly = selected_id.as_ref().and_then(|id| {
+        state
+            .assemblies
+            .read()
+            .iter()
+            .find(|assembly| assembly.id == *id)
+            .cloned()
+    });
+    let assembly_metadata = if let Some(ref id) = selected_id {
+        let explore_key = format!("{id}::explore");
+        state
+            .with_analysis_result(&explore_key, |result| {
+                result
+                    .explore
+                    .as_ref()
+                    .map(|payload| payload.assembly_metadata.clone())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
+    } else {
+        Default::default()
+    };
+    let metadata_available = has_metadata(&assembly_metadata);
     let methods = if let Some(ref id) = selected_id {
         let explore_key = format!("{id}::explore");
         state
@@ -172,6 +202,10 @@ pub fn IlViewPanel(
     let show_type_overview = active_tab
         .as_ref()
         .map(|tab| tab.kind == IlTabKind::Type)
+        .unwrap_or(false);
+    let show_metadata_view = active_tab
+        .as_ref()
+        .map(|tab| tab.kind == IlTabKind::AssemblyMetadata)
         .unwrap_or(false);
 
     let active_finding = selected_finding().and_then(|index| findings.get(index).cloned());
@@ -249,6 +283,9 @@ pub fn IlViewPanel(
     let assemblies_for_source = state.assemblies.read().clone();
     let csharp_cache_key = active_id_for_source.and_then(|tab_id| {
         let tab = tabs_for_source.into_iter().find(|t| t.id == tab_id)?;
+        if tab.kind == IlTabKind::AssemblyMetadata {
+            return None;
+        }
         let asm_id = selected_id.clone()?;
         let asm = assemblies_for_source.into_iter().find(|a| a.id == asm_id)?;
         Some(format!(
@@ -348,36 +385,44 @@ pub fn IlViewPanel(
             div {
                 class: "panel-header",
                 span {
-                    if view_mode() == ViewMode::CSharp { "C# View" } else { "IL View" }
-                }
-                // IL / C# toggle
-                div {
-                    style: format!(
-                        "margin-left: auto; display: flex; align-items: center; gap: 2px; \
-                         background: {C_BG_BASE}; border: 1px solid {C_BORDER}; \
-                         border-radius: 6px; padding: 2px;"
-                    ),
-                    button {
-                        style: format!(
-                            "font-size: 10px; font-weight: 600; padding: 3px 8px; \
-                             border-radius: 4px; cursor: pointer; border: none; \
-                             transition: all 120ms; background: {}; color: {};",
-                            if view_mode() == ViewMode::Il { C_BG_ELEVATED } else { "transparent" },
-                            if view_mode() == ViewMode::Il { C_TEXT_PRIMARY } else { C_TEXT_MUTED }
-                        ),
-                        onclick: move |_| view_mode.set(ViewMode::Il),
-                        "IL"
+                    if show_metadata_view {
+                        "Assembly Details"
+                    } else if view_mode() == ViewMode::CSharp {
+                        "C# View"
+                    } else {
+                        "IL View"
                     }
-                    button {
+                }
+                if !show_metadata_view {
+                    // IL / C# toggle
+                    div {
                         style: format!(
-                            "font-size: 10px; font-weight: 600; padding: 3px 8px; \
-                             border-radius: 4px; cursor: pointer; border: none; \
-                             transition: all 120ms; background: {}; color: {};",
-                            if view_mode() == ViewMode::CSharp { C_BG_ELEVATED } else { "transparent" },
-                            if view_mode() == ViewMode::CSharp { C_TEXT_PRIMARY } else { C_TEXT_MUTED }
+                            "margin-left: auto; display: flex; align-items: center; gap: 2px; \
+                             background: {C_BG_BASE}; border: 1px solid {C_BORDER}; \
+                             border-radius: 6px; padding: 2px;"
                         ),
-                        onclick: move |_| view_mode.set(ViewMode::CSharp),
-                        "C#"
+                        button {
+                            style: format!(
+                                "font-size: 10px; font-weight: 600; padding: 3px 8px; \
+                                 border-radius: 4px; cursor: pointer; border: none; \
+                                 transition: all 120ms; background: {}; color: {};",
+                                if view_mode() == ViewMode::Il { C_BG_ELEVATED } else { "transparent" },
+                                if view_mode() == ViewMode::Il { C_TEXT_PRIMARY } else { C_TEXT_MUTED }
+                            ),
+                            onclick: move |_| view_mode.set(ViewMode::Il),
+                            "IL"
+                        }
+                        button {
+                            style: format!(
+                                "font-size: 10px; font-weight: 600; padding: 3px 8px; \
+                                 border-radius: 4px; cursor: pointer; border: none; \
+                                 transition: all 120ms; background: {}; color: {};",
+                                if view_mode() == ViewMode::CSharp { C_BG_ELEVATED } else { "transparent" },
+                                if view_mode() == ViewMode::CSharp { C_TEXT_PRIMARY } else { C_TEXT_MUTED }
+                            ),
+                            onclick: move |_| view_mode.set(ViewMode::CSharp),
+                            "C#"
+                        }
                     }
                 }
             }
@@ -485,7 +530,29 @@ pub fn IlViewPanel(
                 div {
                     style: "flex: 1; overflow-y: auto; padding: 10px 14px;",
 
-                    if view_mode() == ViewMode::Il {
+                    if show_metadata_view {
+                        if let Some(assembly) = selected_assembly.clone() {
+                            if metadata_available {
+                                AssemblyMetadataView {
+                                    assembly_name: assembly.name.clone(),
+                                    assembly_path: assembly.path.clone(),
+                                    metadata: assembly_metadata.clone(),
+                                    collapsed_sections: metadata_collapsed_sections,
+                                    framed: false,
+                                }
+                            } else {
+                                div {
+                                    class: "empty-state",
+                                    p { "No assembly metadata is available for the selected assembly." }
+                                }
+                            }
+                        } else {
+                            div {
+                                class: "empty-state",
+                                p { "Select an assembly to inspect metadata." }
+                            }
+                        }
+                    } else if view_mode() == ViewMode::Il {
                         // ── IL view ───────────────────────────────────────────────
 
                         if show_type_overview {

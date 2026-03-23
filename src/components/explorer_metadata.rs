@@ -2,14 +2,17 @@ use std::collections::BTreeSet;
 
 use dioxus::prelude::*;
 
-use crate::ipc::{AssemblyMetadataEntry, AttributeMetadataEntry, ResourceMetadataEntry};
-
-use super::theme::{
-    C_BG_BASE, C_BG_ELEVATED, C_BORDER, C_BORDER_ACCENT, C_TEXT_MUTED, C_TEXT_PRIMARY,
-    C_TEXT_SECONDARY, FONT_MONO,
+use crate::ipc::{
+    AssemblyMetadataEntry, AssemblyReferenceEntry, AttributeMetadataEntry, ModuleMetadataEntry,
+    ResourceMetadataEntry,
 };
 
-const METADATA_SECTION_KEYS: [&str; 5] = [
+use super::theme::{
+    C_BG_ELEVATED, C_BG_SURFACE, C_BORDER, C_TEXT_MUTED, C_TEXT_PRIMARY, C_TEXT_SECONDARY,
+    FONT_MONO,
+};
+
+const DEFAULT_COLLAPSED_METADATA_SECTIONS: [&str; 5] = [
     "overview",
     "modules",
     "references",
@@ -37,102 +40,111 @@ pub(crate) fn has_metadata(metadata: &AssemblyMetadataEntry) -> bool {
 }
 
 pub(crate) fn default_collapsed_metadata_sections() -> BTreeSet<String> {
-    METADATA_SECTION_KEYS
+    DEFAULT_COLLAPSED_METADATA_SECTIONS
         .into_iter()
         .map(str::to_string)
         .collect()
 }
 
 #[component]
-pub(crate) fn ExplorerMetadataCard(
+pub(crate) fn AssemblyMetadataView(
     assembly_name: String,
     assembly_path: String,
     metadata: AssemblyMetadataEntry,
     collapsed_sections: Signal<BTreeSet<String>>,
+    framed: bool,
 ) -> Element {
-    let resources_count = metadata.resources.len();
-    let references_count = metadata.assembly_references.len();
-    let attributes_count = metadata.custom_attributes.len();
-    let modules_count = metadata.modules.len();
     let display_name = display_or_fallback(&metadata.assembly_name, &assembly_name);
+    let summary = metadata_header_summary(&metadata);
+    let overview_rows = overview_rows(&metadata, &assembly_name);
+    let container_style = if framed {
+        format!(
+            "border: 1px solid {C_BORDER}; border-radius: 7px; overflow: hidden; background: {C_BG_SURFACE};"
+        )
+    } else {
+        "display: flex; flex-direction: column;".to_string()
+    };
+    let header_style = if framed {
+        format!(
+            "padding: 7px 8px 6px; display: flex; flex-direction: column; gap: 3px; border-bottom: 1px solid {C_BORDER}; background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.015) 100%);"
+        )
+    } else {
+        format!(
+            "padding: 2px 0 10px; display: flex; flex-direction: column; gap: 4px; border-bottom: 1px solid {C_BORDER};"
+        )
+    };
 
     rsx! {
         div {
-            style: format!(
-                "border: 1px solid {C_BORDER}; border-radius: 10px; overflow: hidden; background: {C_BG_ELEVATED};"
-            ),
+            style: "{container_style}",
 
             div {
-                style: format!(
-                    "padding: 8px; display: flex; flex-direction: column; gap: 8px; border-bottom: 1px solid {C_BORDER}; background: rgba(255,255,255,0.015);"
-                ),
-
-                div {
-                    style: "display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; flex-wrap: wrap;",
-
-                    div {
-                        style: "min-width: 0; display: flex; flex-direction: column; gap: 3px; flex: 1 1 180px;",
-                        span {
-                            style: format!("font-size: 9px; font-weight: 700; letter-spacing: 0.1em; color: {C_TEXT_MUTED}; text-transform: uppercase;"),
-                            "Assembly metadata"
-                        }
-                        span {
-                            style: format!("font-size: 12px; font-weight: 700; color: {C_TEXT_PRIMARY}; line-height: 1.25; word-break: break-word;"),
-                            "{display_name}"
-                        }
-                        span {
-                            style: format!("font-size: 9px; color: {C_TEXT_MUTED}; font-family: {FONT_MONO}; line-height: 1.35; word-break: break-all;"),
-                            "{assembly_path}"
-                        }
+                style: "{header_style}",
+                span {
+                    style: format!(
+                        "font-size: 8px; font-weight: 700; letter-spacing: 0.08em; color: {C_TEXT_MUTED}; text-transform: uppercase;"
+                    ),
+                    "Assembly metadata"
+                }
+                span {
+                    style: format!(
+                        "font-size: 12px; font-weight: 700; color: {C_TEXT_PRIMARY}; line-height: 1.25; word-break: break-word;"
+                    ),
+                    "{display_name}"
+                }
+                if let Some(summary) = summary {
+                    span {
+                        style: format!(
+                            "font-size: 9px; color: {C_TEXT_SECONDARY}; line-height: 1.3; word-break: break-word;"
+                        ),
+                        "{summary}"
                     }
+                }
+                span {
+                    style: format!(
+                        "font-size: 9px; color: {C_TEXT_MUTED}; font-family: {FONT_MONO}; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                    ),
+                    "{assembly_path}"
                 }
             }
 
             div {
-                style: "padding: 8px; display: flex; flex-direction: column; gap: 6px;",
+                style: "display: flex; flex-direction: column;",
 
                 MetadataSection {
                     section_key: "overview".to_string(),
                     title: "Overview".to_string(),
                     count_label: None,
                     collapsed_sections,
-                    div {
-                        style: "display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;",
-                        MetadataField { label: "Assembly name".to_string(), value: metadata_value(metadata.assembly_name.as_str()) }
-                        MetadataField { label: "Version".to_string(), value: optional_value(metadata.version.as_deref()) }
-                        MetadataField {
-                            label: target_framework_label(&metadata).to_string(),
-                            value: target_framework_value(&metadata),
+                    framed,
+                    is_first: true,
+                    if overview_rows.is_empty() {
+                        MetadataEmpty {
+                            message: "Only the assembly identity is available from the current worker response."
+                                .to_string(),
                         }
-                        MetadataField { label: "Runtime".to_string(), value: optional_value(metadata.runtime_version.as_deref()) }
-                        MetadataField { label: "Architecture".to_string(), value: optional_value(metadata.architecture.as_deref()) }
-                        MetadataField { label: "Module kind".to_string(), value: optional_value(metadata.module_kind.as_deref()) }
-                        MetadataField { label: "Culture".to_string(), value: optional_value(metadata.culture.as_deref()) }
-                        MetadataField { label: "Public key token".to_string(), value: optional_value(metadata.public_key_token.as_deref()) }
-                        MetadataField { label: "Entry point".to_string(), value: optional_value(metadata.entry_point.as_deref()) }
-                        MetadataField { label: "MVID".to_string(), value: optional_value(metadata.mvid.as_deref()) }
-                        MetadataFieldWide { label: "Full name".to_string(), value: metadata_value(metadata.full_name.as_str()) }
+                    } else {
+                        MetadataPropertyGrid { rows: overview_rows }
                     }
                 }
 
                 MetadataSection {
                     section_key: "modules".to_string(),
                     title: "Modules".to_string(),
-                    count_label: Some(modules_count.to_string()),
+                    count_label: Some(metadata.modules.len().to_string()),
                     collapsed_sections,
+                    framed,
+                    is_first: false,
                     if metadata.modules.is_empty() {
                         MetadataEmpty { message: "No module metadata exposed by the worker.".to_string() }
                     } else {
-                        for module in metadata.modules.iter() {
-                            MetadataListCard {
+                        for (index, module) in metadata.modules.iter().enumerate() {
+                            MetadataListEntry {
+                                key: "module-{index}",
+                                bordered: index > 0,
                                 title: display_or_fallback(&module.name, "Unnamed module"),
-                                subtitle: optional_value(module.file_name.as_deref()),
-                                rows: vec![
-                                    ("Runtime".to_string(), optional_value(module.runtime_version.as_deref())),
-                                    ("Architecture".to_string(), optional_value(module.architecture.as_deref())),
-                                    ("Kind".to_string(), optional_value(module.module_kind.as_deref())),
-                                    ("MVID".to_string(), optional_value(module.mvid.as_deref())),
-                                ],
+                                subtitle: None,
+                                rows: module_rows(module),
                             }
                         }
                     }
@@ -141,20 +153,20 @@ pub(crate) fn ExplorerMetadataCard(
                 MetadataSection {
                     section_key: "references".to_string(),
                     title: "Assembly references".to_string(),
-                    count_label: Some(references_count.to_string()),
+                    count_label: Some(metadata.assembly_references.len().to_string()),
                     collapsed_sections,
+                    framed,
+                    is_first: false,
                     if metadata.assembly_references.is_empty() {
                         MetadataEmpty { message: "No assembly references were found.".to_string() }
                     } else {
-                        for reference in metadata.assembly_references.iter() {
-                            MetadataListCard {
+                        for (index, reference) in metadata.assembly_references.iter().enumerate() {
+                            MetadataListEntry {
+                                key: "reference-{index}",
+                                bordered: index > 0,
                                 title: display_or_fallback(&reference.name, "Unnamed reference"),
-                                subtitle: optional_value(reference.version.as_deref()),
-                                rows: vec![
-                                    ("Full name".to_string(), metadata_value(reference.full_name.as_str())),
-                                    ("Culture".to_string(), optional_value(reference.culture.as_deref())),
-                                    ("Public key token".to_string(), optional_value(reference.public_key_token.as_deref())),
-                                ],
+                                subtitle: present_text(reference.version.as_deref()).map(str::to_string),
+                                rows: reference_rows(reference),
                             }
                         }
                     }
@@ -163,13 +175,19 @@ pub(crate) fn ExplorerMetadataCard(
                 MetadataSection {
                     section_key: "resources".to_string(),
                     title: "Manifest resources".to_string(),
-                    count_label: Some(resources_count.to_string()),
+                    count_label: Some(metadata.resources.len().to_string()),
                     collapsed_sections,
+                    framed,
+                    is_first: false,
                     if metadata.resources.is_empty() {
                         MetadataEmpty { message: "No manifest resources were found.".to_string() }
                     } else {
-                        for resource in metadata.resources.iter() {
-                            ResourceCard { resource: resource.clone() }
+                        for (index, resource) in metadata.resources.iter().enumerate() {
+                            ResourceEntry {
+                                key: "resource-{index}",
+                                resource: resource.clone(),
+                                bordered: index > 0,
+                            }
                         }
                     }
                 }
@@ -177,13 +195,19 @@ pub(crate) fn ExplorerMetadataCard(
                 MetadataSection {
                     section_key: "attributes".to_string(),
                     title: "Assembly attributes".to_string(),
-                    count_label: Some(attributes_count.to_string()),
+                    count_label: Some(metadata.custom_attributes.len().to_string()),
                     collapsed_sections,
+                    framed,
+                    is_first: false,
                     if metadata.custom_attributes.is_empty() {
                         MetadataEmpty { message: "No custom assembly attributes were found.".to_string() }
                     } else {
-                        for attribute in metadata.custom_attributes.iter() {
-                            AttributeCard { attribute: attribute.clone() }
+                        for (index, attribute) in metadata.custom_attributes.iter().enumerate() {
+                            AttributeEntry {
+                                key: "attribute-{index}",
+                                attribute: attribute.clone(),
+                                bordered: index > 0,
+                            }
                         }
                     }
                 }
@@ -198,20 +222,40 @@ fn MetadataSection(
     title: String,
     count_label: Option<String>,
     collapsed_sections: Signal<BTreeSet<String>>,
+    framed: bool,
+    is_first: bool,
     children: Element,
 ) -> Element {
     let is_open = !collapsed_sections.read().contains(&section_key);
     let toggle_key = section_key.clone();
     let chevron_rotation = if is_open { "90deg" } else { "0deg" };
+    let border_top = if is_first {
+        "0".to_string()
+    } else {
+        format!("1px solid {C_BORDER}")
+    };
+    let header_background = if is_open {
+        if framed {
+            C_BG_ELEVATED
+        } else {
+            "rgba(255,255,255,0.03)"
+        }
+    } else {
+        "transparent"
+    };
+    let header_padding = if framed { "6px 8px" } else { "6px 0" };
+    let content_background = if framed {
+        "rgba(0,0,0,0.08)"
+    } else {
+        "transparent"
+    };
 
     rsx! {
         div {
-            style: "display: flex; flex-direction: column; gap: 8px;",
+            style: "display: flex; flex-direction: column;",
             button {
                 style: format!(
-                    "display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 9px; border-radius: 8px; border: 1px solid {}; background: {}; color: {C_TEXT_PRIMARY}; cursor: pointer; text-align: left; transition: all 120ms ease;",
-                    if is_open { C_BORDER_ACCENT } else { C_BORDER },
-                    if is_open { C_BG_ELEVATED } else { C_BG_BASE },
+                    "display: flex; align-items: center; gap: 7px; width: 100%; padding: {header_padding}; border: none; border-top: {border_top}; background: {header_background}; color: {C_TEXT_PRIMARY}; cursor: pointer; text-align: left;"
                 ),
                 onclick: move |_| {
                     let mut set = collapsed_sections.write();
@@ -238,18 +282,17 @@ fn MetadataSection(
                     }
                 }
 
-                div {
-                    style: "display: flex; align-items: center; min-width: 0; flex: 1;",
-                    span {
-                        style: format!("font-size: 10px; font-weight: 700; color: {C_TEXT_PRIMARY}; text-transform: uppercase; letter-spacing: 0.08em;"),
-                        "{title}"
-                    }
+                span {
+                    style: format!(
+                        "min-width: 0; flex: 1; font-size: 9px; font-weight: 700; color: {C_TEXT_PRIMARY}; text-transform: uppercase; letter-spacing: 0.08em;"
+                    ),
+                    "{title}"
                 }
 
                 if let Some(count) = count_label {
                     span {
                         style: format!(
-                            "margin-left: auto; flex-shrink: 0; min-width: 20px; padding: 1px 6px; border-radius: 999px; border: 1px solid {C_BORDER}; background: rgba(16,17,19,0.72); font-size: 9px; color: {C_TEXT_SECONDARY}; text-align: center;"
+                            "margin-left: auto; flex-shrink: 0; font-size: 9px; color: {C_TEXT_SECONDARY}; font-family: {FONT_MONO};"
                         ),
                         "{count}"
                     }
@@ -259,7 +302,7 @@ fn MetadataSection(
             if is_open {
                 div {
                     style: format!(
-                        "padding: 6px; border-radius: 8px; border: 1px solid {C_BORDER}; background: rgba(255,255,255,0.015); display: flex; flex-direction: column; gap: 6px;"
+                        "display: flex; flex-direction: column; background: {content_background};"
                     ),
                     {children}
                 }
@@ -269,38 +312,30 @@ fn MetadataSection(
 }
 
 #[component]
-fn MetadataField(label: String, value: String) -> Element {
+fn MetadataPropertyGrid(rows: Vec<(String, String)>) -> Element {
     rsx! {
         div {
-            style: format!(
-                "padding: 7px 8px; border-radius: 8px; border: 1px solid {C_BORDER}; background: {C_BG_BASE}; display: flex; flex-direction: column; gap: 4px; min-width: 0;"
-            ),
-            span {
-                style: format!("font-size: 8px; color: {C_TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.06em;"),
-                "{label}"
-            }
-            span {
-                style: format!("font-size: 10px; line-height: 1.35; color: {C_TEXT_PRIMARY}; font-family: {FONT_MONO}; white-space: normal; word-break: break-word;"),
-                "{value}"
-            }
-        }
-    }
-}
-
-#[component]
-fn MetadataFieldWide(label: String, value: String) -> Element {
-    rsx! {
-        div {
-            style: format!(
-                "grid-column: 1 / -1; padding: 7px 8px; border-radius: 8px; border: 1px solid {C_BORDER}; background: {C_BG_BASE}; display: flex; flex-direction: column; gap: 4px; min-width: 0;"
-            ),
-            span {
-                style: format!("font-size: 8px; color: {C_TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.06em;"),
-                "{label}"
-            }
-            span {
-                style: format!("font-size: 10px; line-height: 1.35; color: {C_TEXT_PRIMARY}; font-family: {FONT_MONO}; white-space: normal; word-break: break-word;"),
-                "{value}"
+            style: "display: flex; flex-direction: column;",
+            for (index, (label, value)) in rows.iter().enumerate() {
+                div {
+                    key: "{label}-{index}",
+                    style: format!(
+                        "display: grid; grid-template-columns: minmax(90px, 108px) minmax(0, 1fr); gap: 10px; align-items: start; padding: 4px 8px; border-top: {};",
+                        if index == 0 { "0" } else { "1px solid rgba(255,255,255,0.04)" }
+                    ),
+                    span {
+                        style: format!(
+                            "font-size: 8px; color: {C_TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.06em; line-height: 1.4;"
+                        ),
+                        "{label}"
+                    }
+                    span {
+                        style: format!(
+                            "font-size: 9px; line-height: 1.45; color: {C_TEXT_PRIMARY}; font-family: {FONT_MONO}; white-space: normal; word-break: break-word;"
+                        ),
+                        "{value}"
+                    }
+                }
             }
         }
     }
@@ -311,7 +346,7 @@ fn MetadataEmpty(message: String) -> Element {
     rsx! {
         div {
             style: format!(
-                "padding: 8px; border-radius: 8px; border: 1px dashed {C_BORDER_ACCENT}; color: {C_TEXT_MUTED}; font-size: 10px; line-height: 1.4; background: rgba(16,17,19,0.54);"
+                "padding: 7px 8px; color: {C_TEXT_MUTED}; font-size: 10px; line-height: 1.45;"
             ),
             "{message}"
         }
@@ -319,96 +354,208 @@ fn MetadataEmpty(message: String) -> Element {
 }
 
 #[component]
-fn MetadataListCard(title: String, subtitle: String, rows: Vec<(String, String)>) -> Element {
+fn MetadataListEntry(
+    bordered: bool,
+    title: String,
+    subtitle: Option<String>,
+    rows: Vec<(String, String)>,
+) -> Element {
+    let border_top = if bordered {
+        "1px solid rgba(255,255,255,0.05)"
+    } else {
+        "0"
+    };
+
     rsx! {
         div {
             style: format!(
-                "padding: 8px; border-radius: 8px; border: 1px solid {C_BORDER}; background: {C_BG_BASE}; display: flex; flex-direction: column; gap: 6px;"
+                "display: flex; flex-direction: column; gap: 4px; padding: 6px 8px 7px; border-top: {border_top};"
             ),
             div {
                 style: "display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0;",
                 span {
-                    style: format!("font-size: 10px; font-weight: 700; color: {C_TEXT_PRIMARY}; line-height: 1.35; word-break: break-word;"),
+                    style: format!(
+                        "min-width: 0; flex: 1; font-size: 10px; font-weight: 700; color: {C_TEXT_PRIMARY}; line-height: 1.35; word-break: break-word;"
+                    ),
                     "{title}"
                 }
-                span {
-                    style: format!("font-size: 9px; color: {C_TEXT_MUTED}; font-family: {FONT_MONO}; text-align: right; line-height: 1.35; word-break: break-word;"),
-                    "{subtitle}"
+                if let Some(subtitle) = subtitle {
+                    span {
+                        style: format!(
+                            "flex: 0 1 40%; min-width: 0; font-size: 9px; color: {C_TEXT_MUTED}; font-family: {FONT_MONO}; text-align: right; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                        ),
+                        "{subtitle}"
+                    }
                 }
             }
-            for (label, value) in rows.iter() {
-                div {
-                    key: "{title}-{label}",
-                    style: format!(
-                        "display: grid; grid-template-columns: minmax(78px, 100px) 1fr; gap: 10px; padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.04);"
-                    ),
-                    span {
-                        style: format!("font-size: 9px; color: {C_TEXT_MUTED}; text-transform: uppercase; letter-spacing: 0.05em;"),
-                        "{label}"
-                    }
-                    span {
-                        style: format!("font-size: 9px; line-height: 1.4; color: {C_TEXT_PRIMARY}; font-family: {FONT_MONO}; white-space: normal; word-break: break-word;"),
-                        "{value}"
-                    }
-                }
+            if !rows.is_empty() {
+                MetadataPropertyGrid { rows }
             }
         }
     }
 }
 
 #[component]
-fn ResourceCard(resource: ResourceMetadataEntry) -> Element {
+fn ResourceEntry(resource: ResourceMetadataEntry, bordered: bool) -> Element {
     rsx! {
-        MetadataListCard {
+        MetadataListEntry {
+            bordered,
             title: display_or_fallback(&resource.name, "Unnamed resource"),
-            subtitle: display_or_fallback(&resource.resource_type, "Unknown"),
-            rows: vec![
-                ("Attributes".to_string(), optional_value(resource.attributes.as_deref())),
-                ("Size".to_string(), format_bytes(resource.size_bytes)),
-                ("Source".to_string(), optional_value(resource.implementation.as_deref())),
-            ],
+            subtitle: present_text(non_empty_string(&resource.resource_type)).map(str::to_string),
+            rows: resource_rows(&resource),
         }
     }
 }
 
 #[component]
-fn AttributeCard(attribute: AttributeMetadataEntry) -> Element {
+fn AttributeEntry(attribute: AttributeMetadataEntry, bordered: bool) -> Element {
+    let border_top = if bordered {
+        "1px solid rgba(255,255,255,0.05)"
+    } else {
+        "0"
+    };
+
     rsx! {
         div {
             style: format!(
-                "padding: 8px; border-radius: 8px; border: 1px solid {C_BORDER}; background: {C_BG_BASE}; display: flex; flex-direction: column; gap: 5px;"
+                "display: flex; flex-direction: column; gap: 3px; padding: 6px 8px 7px; border-top: {border_top};"
             ),
             span {
                 style: format!("font-size: 10px; line-height: 1.35; font-weight: 700; color: {C_TEXT_PRIMARY}; font-family: {FONT_MONO}; word-break: break-word;"),
                 "{attribute.attribute_type}"
             }
-            span {
-                style: format!("font-size: 9px; line-height: 1.4; color: {C_TEXT_SECONDARY}; word-break: break-word;"),
-                "{optional_value(attribute.summary.as_deref())}"
+            if let Some(summary) = present_text(attribute.summary.as_deref()) {
+                span {
+                    style: format!(
+                        "font-size: 9px; line-height: 1.45; color: {C_TEXT_SECONDARY}; word-break: break-word;"
+                    ),
+                    "{summary}"
+                }
             }
         }
     }
 }
 
 fn has_text(value: Option<&str>) -> bool {
-    value.is_some_and(|value| !value.trim().is_empty())
+    present_text(value).is_some()
 }
 
-fn optional_value(value: Option<&str>) -> String {
-    value
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or("-")
-        .to_string()
+fn present_text(value: Option<&str>) -> Option<&str> {
+    value.filter(|value| !value.trim().is_empty())
+}
+
+fn non_empty_string(value: &str) -> Option<&str> {
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn metadata_header_summary(metadata: &AssemblyMetadataEntry) -> Option<String> {
+    let mut parts = Vec::new();
+
+    if target_framework_display(metadata).is_some() {
+        parts.push(target_framework_value(metadata));
+    }
+    if let Some(version) = present_text(metadata.version.as_deref()) {
+        parts.push(version.to_string());
+    }
+    if let Some(architecture) = present_text(metadata.architecture.as_deref()) {
+        parts.push(architecture.to_string());
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" | "))
+    }
+}
+
+fn overview_rows(metadata: &AssemblyMetadataEntry, assembly_name: &str) -> Vec<(String, String)> {
+    let mut rows = vec![(
+        "Assembly name".to_string(),
+        display_or_fallback(&metadata.assembly_name, assembly_name),
+    )];
+
+    push_optional_row(&mut rows, "Version", metadata.version.as_deref());
+    if target_framework_display(metadata).is_some() {
+        rows.push((
+            target_framework_label(metadata).to_string(),
+            target_framework_value(metadata),
+        ));
+    }
+    push_optional_row(&mut rows, "Runtime", metadata.runtime_version.as_deref());
+    push_optional_row(&mut rows, "Architecture", metadata.architecture.as_deref());
+    push_optional_row(&mut rows, "Module kind", metadata.module_kind.as_deref());
+    push_optional_row(&mut rows, "Culture", metadata.culture.as_deref());
+    push_optional_row(
+        &mut rows,
+        "Public key token",
+        metadata.public_key_token.as_deref(),
+    );
+    push_optional_row(&mut rows, "Entry point", metadata.entry_point.as_deref());
+    push_optional_row(&mut rows, "MVID", metadata.mvid.as_deref());
+    push_optional_row(
+        &mut rows,
+        "Full name",
+        non_empty_string(&metadata.full_name),
+    );
+
+    rows
+}
+
+fn module_rows(module: &ModuleMetadataEntry) -> Vec<(String, String)> {
+    let mut rows = Vec::new();
+    push_optional_row(&mut rows, "File", module.file_name.as_deref());
+    push_optional_row(&mut rows, "Runtime", module.runtime_version.as_deref());
+    push_optional_row(&mut rows, "Architecture", module.architecture.as_deref());
+    push_optional_row(&mut rows, "Kind", module.module_kind.as_deref());
+    push_optional_row(&mut rows, "MVID", module.mvid.as_deref());
+    rows
+}
+
+fn reference_rows(reference: &AssemblyReferenceEntry) -> Vec<(String, String)> {
+    let mut rows = Vec::new();
+    push_optional_row(
+        &mut rows,
+        "Full name",
+        non_empty_string(&reference.full_name),
+    );
+    push_optional_row(&mut rows, "Culture", reference.culture.as_deref());
+    push_optional_row(
+        &mut rows,
+        "Public key token",
+        reference.public_key_token.as_deref(),
+    );
+    rows
+}
+
+fn resource_rows(resource: &ResourceMetadataEntry) -> Vec<(String, String)> {
+    let mut rows = Vec::new();
+    push_optional_row(&mut rows, "Attributes", resource.attributes.as_deref());
+    if let Some(size) = format_present_bytes(resource.size_bytes) {
+        rows.push(("Size".to_string(), size));
+    }
+    push_optional_row(&mut rows, "Source", resource.implementation.as_deref());
+    rows
+}
+
+fn push_optional_row(rows: &mut Vec<(String, String)>, label: &str, value: Option<&str>) {
+    if let Some(value) = present_text(value) {
+        rows.push((label.to_string(), value.to_string()));
+    }
+}
+
+fn target_framework_display(metadata: &AssemblyMetadataEntry) -> Option<&str> {
+    present_text(metadata.target_framework.as_deref())
+        .or_else(|| present_text(metadata.inferred_target_framework.as_deref()))
 }
 
 fn target_framework_value(metadata: &AssemblyMetadataEntry) -> String {
-    optional_value(
-        metadata
-            .target_framework
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
-            .or(metadata.inferred_target_framework.as_deref()),
-    )
+    target_framework_display(metadata)
+        .unwrap_or("-")
+        .to_string()
 }
 
 fn target_framework_label(metadata: &AssemblyMetadataEntry) -> &'static str {
@@ -429,20 +576,16 @@ fn target_framework_label(metadata: &AssemblyMetadataEntry) -> &'static str {
     }
 }
 
-fn metadata_value(value: &str) -> String {
-    if value.trim().is_empty() {
-        "-".to_string()
-    } else {
-        value.to_string()
-    }
-}
-
 fn display_or_fallback(primary: &str, fallback: &str) -> String {
     if primary.trim().is_empty() {
         fallback.to_string()
     } else {
         primary.to_string()
     }
+}
+
+fn format_present_bytes(size: Option<i64>) -> Option<String> {
+    size.map(|size| format_bytes(Some(size)))
 }
 
 fn format_bytes(size: Option<i64>) -> String {
@@ -469,13 +612,13 @@ fn format_bytes(size: Option<i64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        default_collapsed_metadata_sections, format_bytes, has_metadata, target_framework_label,
-        target_framework_value,
+        default_collapsed_metadata_sections, format_bytes, has_metadata, metadata_header_summary,
+        overview_rows, target_framework_label, target_framework_value,
     };
     use crate::ipc::AssemblyMetadataEntry;
 
     #[test]
-    fn default_collapsed_sections_starts_with_every_section_closed() {
+    fn default_collapsed_sections_start_with_every_section_closed() {
         let sections = default_collapsed_metadata_sections();
 
         assert!(sections.contains("overview"));
@@ -508,6 +651,40 @@ mod tests {
         };
 
         assert!(!has_metadata(&metadata));
+    }
+
+    #[test]
+    fn metadata_header_summary_prefers_useful_identity_fields() {
+        let metadata = AssemblyMetadataEntry {
+            target_framework: Some("net8.0".to_string()),
+            version: Some("1.2.3.4".to_string()),
+            architecture: Some("AnyCPU".to_string()),
+            ..AssemblyMetadataEntry::default()
+        };
+
+        assert_eq!(
+            metadata_header_summary(&metadata),
+            Some("net8.0 | 1.2.3.4 | AnyCPU".to_string())
+        );
+    }
+
+    #[test]
+    fn overview_rows_skip_blank_optional_fields() {
+        let metadata = AssemblyMetadataEntry {
+            version: Some("   ".to_string()),
+            module_kind: Some("Console".to_string()),
+            ..AssemblyMetadataEntry::default()
+        };
+
+        let rows = overview_rows(&metadata, "Fallback.Assembly");
+
+        assert!(rows
+            .iter()
+            .any(|(label, value)| label == "Assembly name" && value == "Fallback.Assembly"));
+        assert!(rows
+            .iter()
+            .any(|(label, value)| label == "Module kind" && value == "Console"));
+        assert!(!rows.iter().any(|(label, _)| label == "Version"));
     }
 
     #[test]

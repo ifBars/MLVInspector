@@ -60,6 +60,7 @@ pub struct UiNamespaceGroup {
 
 #[derive(Clone, PartialEq, Eq)]
 pub enum IlTabKind {
+    AssemblyMetadata,
     Type,
     Method,
 }

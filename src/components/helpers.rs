@@ -177,6 +177,10 @@ pub fn resolve_finding_target(
 
 // Tab ID helpers
 
+pub fn assembly_metadata_tab_id(assembly_id: &str) -> String {
+    format!("assembly::{assembly_id}::metadata")
+}
+
 pub fn type_tab_id(type_name: &str) -> String {
     format!("type::{type_name}")
 }
@@ -656,7 +660,7 @@ fn search_lines_match(source_line: &str, snippet_line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        group_types_by_namespace, highlighted_csharp_lines,
+        assembly_metadata_tab_id, group_types_by_namespace, highlighted_csharp_lines,
         highlighted_csharp_lines_from_source_spans, parse_il_offset_from_snippet,
         parse_il_offsets_from_snippet, resolve_finding_target, resolve_method_reference,
         should_retry_decompile_source,
@@ -682,6 +686,14 @@ mod tests {
         assert_eq!(groups[0].types[0].display_name, "Point");
         assert_eq!(groups[0].types[0].kind, "struct");
         assert!(groups[0].types[0].methods.is_empty());
+    }
+
+    #[test]
+    fn assembly_metadata_tab_id_includes_assembly_identity() {
+        assert_eq!(
+            assembly_metadata_tab_id("sample-assembly"),
+            "assembly::sample-assembly::metadata"
+        );
     }
 
     #[test]

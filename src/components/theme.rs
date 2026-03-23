@@ -71,48 +71,177 @@ pub fn global_css() -> String {
             color: #e5c4c8;
         }}
 
-        .toolbar {{
+        .title-shell {{
+            position: relative;
+            z-index: 1100;
+            overflow: visible;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            background: linear-gradient(180deg, #1a1c20 0%, #16181b 100%);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+        }}
+        .caption-row {{
+            min-height: 32px;
+            display: flex;
+            align-items: stretch;
+            justify-content: space-between;
+            gap: 12px;
+            padding-left: 10px;
+            background: linear-gradient(180deg, #1f2226 0%, #191b1f 100%);
+            font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+        }}
+        .caption-left {{
+            min-width: 0;
+            display: flex;
+            align-items: center;
+            gap: 2px;
+        }}
+        .title-identity {{
+            min-width: 0;
             display: inline-flex;
             align-items: center;
-            gap: 4px;
-            padding: 3px;
-            border: 1px solid #2d3138;
-            border-radius: 8px;
-            background: #101113;
+            gap: 8px;
+            padding-right: 12px;
+            margin-right: 2px;
+            border-right: 1px solid #2a2d33;
         }}
-        .tool-btn {{
-            width: 28px;
-            height: 24px;
-            border: 1px solid transparent;
-            border-radius: 6px;
+        .title-product {{
+            font-size: 12px;
+            font-weight: 600;
+            color: #eef0f3;
+            letter-spacing: 0.1px;
+        }}
+        .title-live-indicator {{
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }}
+        .menu-bar {{
+            position: relative;
+            display: inline-flex;
+            align-items: stretch;
+            gap: 0;
+            z-index: 1;
+        }}
+        .menu-column {{
+            position: relative;
+            display: inline-flex;
+            align-items: stretch;
+        }}
+        .menu-trigger {{
+            min-height: 32px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 11px;
+            border: 0;
+            border-radius: 0;
             background: transparent;
-            color: #b4b8c0;
+            color: #d3d7de;
+            font-size: 12px;
+            font-weight: 400;
+            cursor: pointer;
+            transition: background 100ms ease, color 100ms ease;
+        }}
+        .menu-trigger:hover {{
+            background: #25292f;
+            color: #f5f5f5;
+        }}
+        .menu-trigger.active {{
+            background: #2e333b;
+            color: #f5f5f5;
+            box-shadow: inset 1px 0 0 #434953, inset -1px 0 0 #434953, inset 0 1px 0 #505764;
+        }}
+        .menu-popover {{
+            position: absolute;
+            top: calc(100% - 1px);
+            left: 0;
+            min-width: 240px;
+            padding: 4px 0;
+            border: 1px solid #4a5059;
+            border-radius: 0;
+            background: #23262b;
+            box-shadow: 0 16px 36px rgba(0, 0, 0, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+            z-index: 1150;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+        }}
+        .menu-entry {{
+            width: 100%;
+            min-height: 29px;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 18px;
+            padding: 5px 14px;
+            border: 0;
+            border-radius: 0;
+            background: #23262b;
+            color: #edf0f4;
+            text-align: left;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 100ms ease, color 100ms ease;
+        }}
+        .menu-entry:hover {{
+            background: #39414a;
+        }}
+        .menu-entry-label {{
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        .menu-shortcut {{
+            color: #a8afba;
+            font-size: 10px;
+            font-family: {font_mono};
+            letter-spacing: 0.01em;
+        }}
+        .menu-entry.disabled {{
+            background: #23262b;
+            color: #6f7681;
+            cursor: not-allowed;
+        }}
+        .menu-entry.disabled .menu-shortcut {{
+            color: #606772;
+        }}
+        .menu-entry.disabled:hover {{
+            background: #23262b;
+        }}
+        .menu-trigger:focus-visible,
+        .menu-entry:focus-visible,
+        .caption-btn:focus-visible {{
+            outline: 1px solid #7a8290;
+            outline-offset: -1px;
+        }}
+        .caption-controls {{
+            display: inline-flex;
+            align-items: stretch;
+            margin-left: auto;
+        }}
+        .caption-btn {{
+            width: 46px;
+            min-height: 32px;
+            border: 0;
+            border-radius: 0;
+            background: transparent;
+            color: #c7ccd5;
             display: inline-flex;
             align-items: center;
             justify-content: center;
             cursor: pointer;
-            transition: all 120ms ease;
+            transition: background 100ms ease, color 100ms ease;
         }}
-        .tool-btn:hover {{
-            border-color: #3b4048;
-            background: #1e2126;
+        .caption-btn:hover {{
+            background: #2a2d33;
             color: #f5f5f5;
         }}
-        .tool-btn.active {{
-            border-color: #4f5b6c;
-            background: rgba(245,245,245,0.08);
-            color: #f5f5f5;
-        }}
-        .tool-btn:disabled,
-        .tool-btn.disabled {{
-            opacity: 0.45;
-            cursor: not-allowed;
-        }}
-        .tool-btn:disabled:hover,
-        .tool-btn.disabled:hover {{
-            border-color: transparent;
-            background: transparent;
-            color: #b4b8c0;
+        .caption-btn.close:hover {{
+            background: #c42b1c;
+            color: #ffffff;
         }}
 
         .command-palette-overlay {{
@@ -331,7 +460,7 @@ pub fn global_css() -> String {
             letter-spacing: 1.2px;
             text-transform: uppercase;
             color: #7d828d;
-            padding: 14px 14px 10px;
+            padding: 2px 14px 0px;
             min-height: 39px;
             box-sizing: border-box;
             border-bottom: 1px solid #2d3138;
@@ -543,6 +672,9 @@ pub fn global_css() -> String {
 
         .drag-region {{
             -webkit-app-region: drag;
+            position: relative;
+            overflow: visible;
+            isolation: isolate;
         }}
         .no-drag {{
             -webkit-app-region: no-drag;
