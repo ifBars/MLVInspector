@@ -16,7 +16,7 @@
     <PackageReference Include="ICSharpCode.Decompiler" Version="8.2.0.7535" />
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
     <PackageReference Include="System.Text.Json" Version="9.0.4" />
-    <PackageReference Include="MLVScan.Core" Version="1.3.1" Condition="'$(LocalCoreBuild)' != 'true'" />
+    <PackageReference Include="MLVScan.Core" Version="1.3.6" Condition="'$(LocalCoreBuild)' != 'true'" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(LocalCoreBuild)' == 'true'">
