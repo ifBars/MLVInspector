@@ -45,7 +45,7 @@ jobs:
           fi
 
       - name: Create pull request
-        if: steps.update.outputs.changed == 'true' && github.event_name != 'schedule'
+        if: steps.update.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           commit-message: "chore(worker): update MLVScan.Core to ${{ steps.update.outputs.after }}"
@@ -56,16 +56,6 @@ jobs:
             - Previous version: `${{ steps.update.outputs.before }}`
             - New version: `${{ steps.update.outputs.after }}`
 
-            This PR was created automatically by the scheduled package update workflow.
+            This PR was created automatically by the package update workflow.
           branch: chore/update-mlvscan-core
           delete-branch: true
-
-      - name: Push changes directly on schedule
-        if: steps.update.outputs.changed == 'true' && github.event_name == 'schedule'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -b chore/update-mlvscan-core || git checkout chore/update-mlvscan-core
-          git add MLVInspector.Worker/ILInspector.Worker.csproj
-          git commit -m "chore(worker): update MLVScan.Core to ${{ steps.update.outputs.after }}"
-          git push -u origin chore/update-mlvscan-core --force
