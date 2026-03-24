@@ -85,7 +85,7 @@ pub fn StatusBar(
             } else {
                 span {
                     style: format!("color: {C_TEXT_MUTED};"),
-                    "MLVInspector v0.1"
+                    "MLVInspector"
                 }
             }
         }
