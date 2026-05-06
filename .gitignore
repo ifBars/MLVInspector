@@ -20,7 +20,6 @@ Thumbs.db
 .agents
 .claude
 AGENTS.md
-DESIGN_SYSTEM.md
 skills-lock.json
 coverage/
 TestResults/
