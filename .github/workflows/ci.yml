@@ -64,7 +64,7 @@ jobs:
         shell: pwsh
 
       - name: Install Dioxus CLI
-        run: cargo install dioxus-cli
+        run: cargo install dioxus-cli --version 0.7.3 --locked
 
       - name: Build .NET Worker
         run: dotnet build MLVInspector.Worker/ILInspector.Worker.csproj -c Release -r win-x64
