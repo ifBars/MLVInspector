@@ -5,14 +5,14 @@ use crate::state::AppState;
 use crate::types::AnalysisStatus;
 
 use super::helpers::{
-    extract_findings, extract_methods, method_tab_id, resolve_finding_target,
-    resolve_method_reference, severity_color,
+    extract_findings, extract_methods, extract_scan_overview, method_tab_id,
+    resolve_finding_target, resolve_method_reference, severity_color,
 };
 use super::theme::{
     C_ACCENT_AMBER, C_BG_ELEVATED, C_BG_SURFACE, C_BORDER, C_BORDER_ACCENT, C_TEXT_MUTED,
     C_TEXT_PRIMARY, C_TEXT_SECONDARY, FONT_MONO,
 };
-use super::view_models::{IlTab, IlTabKind, UiFinding, UiMethod};
+use super::view_models::{IlTab, IlTabKind, UiFinding, UiMethod, UiScanOverview};
 
 #[component]
 pub fn FindingsPanel(
@@ -31,6 +31,14 @@ pub fn FindingsPanel(
             .unwrap_or_default()
     } else {
         Vec::new()
+    };
+    let scan_overview = if let Some(ref id) = selected_id {
+        let scan_key = format!("{id}::scan");
+        state
+            .with_analysis_result(&scan_key, extract_scan_overview)
+            .flatten()
+    } else {
+        None
     };
     let methods = if let Some(ref id) = selected_id {
         let explore_key = format!("{id}::explore");
@@ -81,6 +89,10 @@ pub fn FindingsPanel(
 
             div {
                 style: "flex: 1; overflow-y: auto; padding: 8px 0; display: flex; flex-direction: column;",
+
+                if let Some(overview) = scan_overview.as_ref() {
+                    ScanOverviewCard { overview: overview.clone() }
+                }
 
                 if findings.is_empty() {
                     div {
@@ -228,12 +240,59 @@ pub fn FindingsPanel(
                                         "Detail"
                                     }
                                     p {
-                                style: format!(
-                                    "font-size: 12px; color: {C_TEXT_SECONDARY}; \
-                                     line-height: 1.55; margin-bottom: 10px;"
-                                ),
-                                "{detail.description}"
-                            }
+                                        style: format!(
+                                            "font-size: 12px; color: {C_TEXT_SECONDARY}; \
+                                             line-height: 1.55; margin-bottom: 10px;"
+                                        ),
+                                        "{detail.description}"
+                                    }
+                                    div {
+                                        style: "display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px;",
+                                        if let Some(score) = detail.risk_score {
+                                            span {
+                                                class: "badge",
+                                                style: format!("font-family: {FONT_MONO};"),
+                                                "Risk {score}"
+                                            }
+                                        }
+                                        if let Some(visibility) = detail.visibility.as_ref() {
+                                            span {
+                                                class: "badge",
+                                                style: format!("font-family: {FONT_MONO};"),
+                                                "{visibility}"
+                                            }
+                                        }
+                                    }
+                                    if let Some(guidance) = detail.developer_guidance.as_ref() {
+                                        div {
+                                            style: format!(
+                                                "display: grid; gap: 6px; margin-bottom: 10px; padding: 8px; \
+                                                 border: 1px solid {C_BORDER}; border-radius: 6px; background: #101113;"
+                                            ),
+                                            p {
+                                                style: format!(
+                                                    "font-size: 10px; font-weight: 700; letter-spacing: 0.8px; \
+                                                     text-transform: uppercase; color: {C_TEXT_MUTED};"
+                                                ),
+                                                "Guidance"
+                                            }
+                                            p {
+                                                style: format!(
+                                                    "font-size: 11px; color: {C_TEXT_SECONDARY}; line-height: 1.5;"
+                                                ),
+                                                "{guidance.remediation}"
+                                            }
+                                            if !guidance.alternative_apis.is_empty() {
+                                                p {
+                                                    style: format!(
+                                                        "font-size: 10px; color: {C_TEXT_MUTED}; font-family: {FONT_MONO}; \
+                                                         overflow-wrap: anywhere;"
+                                                    ),
+                                                    "{guidance.alternative_apis.join(\", \")}"
+                                                }
+                                            }
+                                        }
+                                    }
                             if !jump_targets.is_empty() {
                                 div {
                                     style: "display: grid; gap: 6px; margin-bottom: 10px;",
@@ -307,6 +366,162 @@ pub fn FindingsPanel(
                 }
             }
         }
+    }
+}
+
+#[component]
+fn ScanOverviewCard(overview: UiScanOverview) -> Element {
+    let classification_color =
+        disposition_color(&overview.classification, overview.blocking_recommended);
+    let completeness_color = if overview.review_recommended {
+        C_ACCENT_AMBER
+    } else {
+        C_TEXT_MUTED
+    };
+
+    rsx! {
+        div {
+            style: format!(
+                "margin: 0 8px 8px; padding: 10px; display: grid; gap: 8px; \
+                 border: 1px solid {C_BORDER}; border-radius: 8px; background: {C_BG_ELEVATED};"
+            ),
+            div {
+                style: "display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;",
+                div {
+                    style: "min-width: 0; display: grid; gap: 3px;",
+                    span {
+                        style: format!(
+                            "font-size: 10px; font-weight: 700; letter-spacing: 0.8px; \
+                             text-transform: uppercase; color: {C_TEXT_MUTED};"
+                        ),
+                        "Disposition"
+                    }
+                    span {
+                        style: format!(
+                            "font-size: 12px; font-weight: 700; color: {C_TEXT_PRIMARY}; \
+                             overflow-wrap: anywhere;"
+                        ),
+                        "{overview.headline}"
+                    }
+                }
+                span {
+                    class: "sev-badge",
+                    style: format!("color: {classification_color}; flex-shrink: 0;"),
+                    "{overview.classification}"
+                }
+            }
+            p {
+                style: format!(
+                    "font-size: 11px; color: {C_TEXT_SECONDARY}; line-height: 1.5;"
+                ),
+                "{overview.summary}"
+            }
+            div {
+                style: "display: flex; flex-wrap: wrap; gap: 6px;",
+                if overview.blocking_recommended {
+                    span {
+                        class: "badge",
+                        style: format!("color: {classification_color}; border-color: {classification_color}66;"),
+                        "Block"
+                    }
+                }
+                span {
+                    class: "badge",
+                    style: format!("color: {completeness_color}; border-color: {completeness_color}66;"),
+                    "{overview.completeness_status}"
+                }
+                if let Some(primary_family) = overview.primary_threat_family_id.as_ref() {
+                    span {
+                        class: "badge",
+                        style: format!("font-family: {FONT_MONO};"),
+                        "{primary_family}"
+                    }
+                }
+            }
+            if overview.review_recommended || !overview.completeness_reasons.is_empty() {
+                div {
+                    style: format!(
+                        "display: grid; gap: 4px; padding-top: 2px; color: {C_TEXT_MUTED}; \
+                         font-size: 10px; line-height: 1.45;"
+                    ),
+                    if overview.completeness_reasons.is_empty() {
+                        p { "Manual review recommended for this scan result." }
+                    } else {
+                        for (reason_index, reason) in overview.completeness_reasons.iter().enumerate() {
+                            p { key: "reason-{reason_index}", "{reason}" }
+                        }
+                    }
+                }
+            }
+            if !overview.threat_families.is_empty() {
+                div {
+                    style: "display: grid; gap: 6px;",
+                    for family in overview.threat_families.iter() {
+                        {
+                            let confidence = format!("{:.0}%", family.confidence * 100.0);
+                            rsx! {
+                                div {
+                                    key: "{family.family_id}-{family.match_kind}",
+                                    style: format!(
+                                        "display: grid; gap: 3px; padding: 7px 8px; border-radius: 6px; \
+                                         border: 1px solid {C_BORDER}; background: #101113;"
+                                    ),
+                                    div {
+                                        style: "display: flex; align-items: center; justify-content: space-between; gap: 8px;",
+                                        span {
+                                            style: format!(
+                                                "min-width: 0; font-size: 11px; font-weight: 700; color: {C_TEXT_PRIMARY}; \
+                                                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                                            ),
+                                            if family.display_name.is_empty() {
+                                                "{family.family_id}"
+                                            } else {
+                                                "{family.display_name}"
+                                            }
+                                        }
+                                        span {
+                                            class: "badge",
+                                            style: format!("font-family: {FONT_MONO};"),
+                                            "{confidence}"
+                                        }
+                                    }
+                                    p {
+                                        style: format!(
+                                            "font-size: 10px; color: {C_TEXT_MUTED}; line-height: 1.45;"
+                                        ),
+                                        "{family.match_kind}"
+                                        if family.exact_hash_match {
+                                            " exact hash"
+                                        }
+                                    }
+                                    if !family.summary.is_empty() {
+                                        p {
+                                            style: format!(
+                                                "font-size: 10px; color: {C_TEXT_SECONDARY}; line-height: 1.45;"
+                                            ),
+                                            "{family.summary}"
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn disposition_color(classification: &str, blocking_recommended: bool) -> &'static str {
+    if blocking_recommended {
+        return C_ACCENT_AMBER;
+    }
+
+    match classification {
+        "KnownThreat" | "Suspicious" => C_ACCENT_AMBER,
+        "ManualReview" | "Incomplete" => C_TEXT_SECONDARY,
+        "Clean" => C_TEXT_MUTED,
+        _ => C_TEXT_SECONDARY,
     }
 }
 
@@ -413,6 +628,9 @@ mod tests {
             location: "Unity".to_string(),
             description: String::new(),
             code_snippet: String::new(),
+            visibility: None,
+            risk_score: None,
+            developer_guidance: None,
             il_offset: None,
             navigation: Some(UiFindingNavigation {
                 primary_type_name: "Unity.UnityCalifornia".to_string(),

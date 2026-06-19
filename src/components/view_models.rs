@@ -26,8 +26,43 @@ pub struct UiFinding {
     pub location: String,
     pub description: String,
     pub code_snippet: String,
+    pub visibility: Option<String>,
+    pub risk_score: Option<i32>,
+    pub developer_guidance: Option<UiDeveloperGuidance>,
     pub il_offset: Option<i64>,
     pub navigation: Option<UiFindingNavigation>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UiDeveloperGuidance {
+    pub remediation: String,
+    pub documentation_url: Option<String>,
+    pub alternative_apis: Vec<String>,
+    pub is_remediable: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct UiScanOverview {
+    pub classification: String,
+    pub headline: String,
+    pub summary: String,
+    pub blocking_recommended: bool,
+    pub primary_threat_family_id: Option<String>,
+    pub completeness_status: String,
+    pub review_recommended: bool,
+    pub completeness_reasons: Vec<String>,
+    pub threat_families: Vec<UiThreatFamily>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct UiThreatFamily {
+    pub family_id: String,
+    pub display_name: String,
+    pub summary: String,
+    pub match_kind: String,
+    pub confidence: f64,
+    pub exact_hash_match: bool,
+    pub advisory_slugs: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

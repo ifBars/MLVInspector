@@ -8,9 +8,9 @@ use crate::ipc::{
 use crate::types::AnalysisResult;
 
 use super::view_models::{
-    UiAttributeMetadata, UiFinding, UiFindingMethodSpan, UiFindingNavigation, UiInstruction,
-    UiMemberMetadata, UiMethod, UiNamespaceGroup, UiScanNeighborhood, UiScanNeighborhoodNode,
-    UiTypeDetails, UiTypeGroup,
+    UiAttributeMetadata, UiDeveloperGuidance, UiFinding, UiFindingMethodSpan, UiFindingNavigation,
+    UiInstruction, UiMemberMetadata, UiMethod, UiNamespaceGroup, UiScanNeighborhood,
+    UiScanNeighborhoodNode, UiScanOverview, UiThreatFamily, UiTypeDetails, UiTypeGroup,
 };
 
 // Data extraction
@@ -64,11 +64,78 @@ pub fn extract_findings(result: &AnalysisResult) -> Vec<UiFinding> {
                 location: finding.location.clone(),
                 description: finding.description.clone(),
                 code_snippet: snippet.to_string(),
+                visibility: finding.visibility.clone(),
+                risk_score: finding.risk_score,
+                developer_guidance: finding.developer_guidance.as_ref().map(|guidance| {
+                    UiDeveloperGuidance {
+                        remediation: guidance.remediation.clone(),
+                        documentation_url: guidance.documentation_url.clone(),
+                        alternative_apis: guidance.alternative_apis.clone().unwrap_or_default(),
+                        is_remediable: guidance.is_remediable,
+                    }
+                }),
                 il_offset: parse_il_offset_from_snippet(snippet),
                 navigation: build_finding_navigation(finding),
             }
         })
         .collect()
+}
+
+pub fn extract_scan_overview(result: &AnalysisResult) -> Option<UiScanOverview> {
+    let scan = result.scan.as_ref()?;
+    let disposition = scan.disposition.as_ref();
+    let completeness = &scan.analysis_completeness;
+
+    Some(UiScanOverview {
+        classification: disposition
+            .map(|d| d.classification.clone())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "Unknown".to_string()),
+        headline: disposition
+            .map(|d| d.headline.clone())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "Scan verdict unavailable".to_string()),
+        summary: disposition
+            .map(|d| d.summary.clone())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "The worker did not return a file-level disposition.".to_string()),
+        blocking_recommended: disposition.map(|d| d.blocking_recommended).unwrap_or(false),
+        primary_threat_family_id: disposition.and_then(|d| d.primary_threat_family_id.clone()),
+        completeness_status: if completeness.status.is_empty() {
+            "Complete".to_string()
+        } else {
+            completeness.status.clone()
+        },
+        review_recommended: completeness.review_recommended || !completeness.is_complete,
+        completeness_reasons: completeness
+            .reasons
+            .iter()
+            .map(|reason| {
+                let mut summary = reason.summary.clone();
+                if let Some(location) = reason.location.as_ref().filter(|value| !value.is_empty()) {
+                    summary.push_str(" at ");
+                    summary.push_str(location);
+                }
+                summary
+            })
+            .filter(|summary| !summary.is_empty())
+            .collect(),
+        threat_families: scan
+            .threat_families
+            .as_ref()
+            .into_iter()
+            .flatten()
+            .map(|family| UiThreatFamily {
+                family_id: family.family_id.clone(),
+                display_name: family.display_name.clone(),
+                summary: family.summary.clone(),
+                match_kind: family.match_kind.clone(),
+                confidence: family.confidence,
+                exact_hash_match: family.exact_hash_match,
+                advisory_slugs: family.advisory_slugs.clone(),
+            })
+            .collect(),
+    })
 }
 
 pub fn extract_scan_neighborhoods(
@@ -1251,6 +1318,9 @@ mod tests {
             location: "System.Net.WebClient::DownloadFileTaskAsync".to_string(),
             description: String::new(),
             code_snippet: String::new(),
+            visibility: None,
+            risk_score: None,
+            developer_guidance: None,
             il_offset: None,
             navigation: Some(UiFindingNavigation {
                 primary_type_name: "System.Net.WebClient".to_string(),
@@ -1291,8 +1361,13 @@ mod tests {
                  execution: ProcessStartInfo FileName=cmd.exe Arguments=/c WindowStyle=Hidden UseShellExecute=True"
                     .to_string(),
             ),
+            risk_score: None,
+            call_chain_id: None,
+            data_flow_chain_id: None,
+            developer_guidance: None,
             call_chain: None,
             data_flow_chain: None,
+            visibility: None,
         };
         let navigation = super::build_finding_navigation(&finding)
             .expect("snippet anchors should produce navigation");
@@ -1302,6 +1377,9 @@ mod tests {
             location: "Unity".to_string(),
             description: String::new(),
             code_snippet: finding.code_snippet.unwrap_or_default(),
+            visibility: None,
+            risk_score: None,
+            developer_guidance: None,
             il_offset: None,
             navigation: Some(navigation),
         };
@@ -1339,11 +1417,13 @@ mod tests {
                     size_bytes: 10,
                     sha256_hash: None,
                 },
+                assembly: None,
                 summary: ScanSummaryEntry {
                     total_findings: 1,
                     count_by_severity: HashMap::new(),
                     triggered_rules: vec!["DataFlowAnalysis".to_string()],
                 },
+                analysis_completeness: Default::default(),
                 findings: vec![FindingEntry {
                     id: Some("finding-1".to_string()),
                     rule_id: Some("DataFlowAnalysis".to_string()),
@@ -1351,6 +1431,10 @@ mod tests {
                     location: "Example.Loader.Run".to_string(),
                     description: "Network data reaches process execution".to_string(),
                     code_snippet: None,
+                    risk_score: None,
+                    call_chain_id: None,
+                    data_flow_chain_id: None,
+                    developer_guidance: None,
                     call_chain: None,
                     data_flow_chain: Some(DataFlowChainEntry {
                         id: "flow-1".to_string(),
@@ -1373,9 +1457,13 @@ mod tests {
                             code_snippet: Some("IL_002A call Process.Start".to_string()),
                         }],
                     }),
+                    visibility: None,
                 }],
                 call_chains: None,
                 data_flows: None,
+                developer_guidance: None,
+                threat_families: None,
+                disposition: None,
             }),
             stderr: String::new(),
         };

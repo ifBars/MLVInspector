@@ -522,8 +522,14 @@ public sealed class ScanPayload
     [JsonPropertyName("input")]
     public ScanInputEntry Input { get; set; } = new();
 
+    [JsonPropertyName("assembly")]
+    public ScanAssemblyEntry? Assembly { get; set; }
+
     [JsonPropertyName("summary")]
     public ScanSummaryEntry Summary { get; set; } = new();
+
+    [JsonPropertyName("analysisCompleteness")]
+    public AnalysisCompletenessEntry AnalysisCompleteness { get; set; } = new();
 
     [JsonPropertyName("findings")]
     public List<FindingEntry> Findings { get; set; } = new();
@@ -533,6 +539,15 @@ public sealed class ScanPayload
 
     [JsonPropertyName("dataFlows")]
     public List<DataFlowChainEntry>? DataFlows { get; set; }
+
+    [JsonPropertyName("developerGuidance")]
+    public List<DeveloperGuidanceEntry>? DeveloperGuidance { get; set; }
+
+    [JsonPropertyName("threatFamilies")]
+    public List<ThreatFamilyEntry>? ThreatFamilies { get; set; }
+
+    [JsonPropertyName("disposition")]
+    public ThreatDispositionEntry? Disposition { get; set; }
 }
 
 public sealed class ScanMetaEntry
@@ -562,6 +577,30 @@ public sealed class ScanInputEntry
     public string? Sha256Hash { get; set; }
 }
 
+public sealed class ScanAssemblyEntry
+{
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
+
+    [JsonPropertyName("assemblyVersion")]
+    public string? AssemblyVersion { get; set; }
+
+    [JsonPropertyName("fileVersion")]
+    public string? FileVersion { get; set; }
+
+    [JsonPropertyName("informationalVersion")]
+    public string? InformationalVersion { get; set; }
+
+    [JsonPropertyName("targetFramework")]
+    public string? TargetFramework { get; set; }
+
+    [JsonPropertyName("moduleRuntimeVersion")]
+    public string? ModuleRuntimeVersion { get; set; }
+
+    [JsonPropertyName("referencedAssemblies")]
+    public List<string>? ReferencedAssemblies { get; set; }
+}
+
 public sealed class ScanSummaryEntry
 {
     [JsonPropertyName("totalFindings")]
@@ -572,6 +611,39 @@ public sealed class ScanSummaryEntry
 
     [JsonPropertyName("triggeredRules")]
     public List<string> TriggeredRules { get; set; } = new();
+}
+
+public sealed class AnalysisCompletenessEntry
+{
+    [JsonPropertyName("status")]
+    public string Status { get; set; } = "";
+
+    [JsonPropertyName("isComplete")]
+    public bool IsComplete { get; set; } = true;
+
+    [JsonPropertyName("reviewRecommended")]
+    public bool ReviewRecommended { get; set; }
+
+    [JsonPropertyName("reasons")]
+    public List<AnalysisCompletenessReasonEntry> Reasons { get; set; } = new();
+}
+
+public sealed class AnalysisCompletenessReasonEntry
+{
+    [JsonPropertyName("reasonId")]
+    public string ReasonId { get; set; } = "";
+
+    [JsonPropertyName("summary")]
+    public string Summary { get; set; } = "";
+
+    [JsonPropertyName("phase")]
+    public string? Phase { get; set; }
+
+    [JsonPropertyName("ruleId")]
+    public string? RuleId { get; set; }
+
+    [JsonPropertyName("location")]
+    public string? Location { get; set; }
 }
 
 public sealed class FindingEntry
@@ -594,11 +666,131 @@ public sealed class FindingEntry
     [JsonPropertyName("codeSnippet")]
     public string? CodeSnippet { get; set; }
 
+    [JsonPropertyName("riskScore")]
+    public int? RiskScore { get; set; }
+
+    [JsonPropertyName("callChainId")]
+    public string? CallChainId { get; set; }
+
+    [JsonPropertyName("dataFlowChainId")]
+    public string? DataFlowChainId { get; set; }
+
+    [JsonPropertyName("developerGuidance")]
+    public DeveloperGuidanceEntry? DeveloperGuidance { get; set; }
+
     [JsonPropertyName("callChain")]
     public CallChainEntry? CallChain { get; set; }
 
     [JsonPropertyName("dataFlowChain")]
     public DataFlowChainEntry? DataFlowChain { get; set; }
+
+    [JsonPropertyName("visibility")]
+    public string? Visibility { get; set; }
+}
+
+public sealed class DeveloperGuidanceEntry
+{
+    [JsonPropertyName("ruleId")]
+    public string? RuleId { get; set; }
+
+    [JsonPropertyName("ruleIds")]
+    public List<string>? RuleIds { get; set; }
+
+    [JsonPropertyName("remediation")]
+    public string Remediation { get; set; } = "";
+
+    [JsonPropertyName("documentationUrl")]
+    public string? DocumentationUrl { get; set; }
+
+    [JsonPropertyName("alternativeApis")]
+    public string[]? AlternativeApis { get; set; }
+
+    [JsonPropertyName("isRemediable")]
+    public bool IsRemediable { get; set; }
+}
+
+public sealed class ThreatFamilyEntry
+{
+    [JsonPropertyName("familyId")]
+    public string FamilyId { get; set; } = "";
+
+    [JsonPropertyName("variantId")]
+    public string VariantId { get; set; } = "";
+
+    [JsonPropertyName("displayName")]
+    public string DisplayName { get; set; } = "";
+
+    [JsonPropertyName("summary")]
+    public string Summary { get; set; } = "";
+
+    [JsonPropertyName("matchKind")]
+    public string MatchKind { get; set; } = "";
+
+    [JsonPropertyName("confidence")]
+    public double Confidence { get; set; }
+
+    [JsonPropertyName("exactHashMatch")]
+    public bool ExactHashMatch { get; set; }
+
+    [JsonPropertyName("matchedRules")]
+    public List<string> MatchedRules { get; set; } = new();
+
+    [JsonPropertyName("advisorySlugs")]
+    public List<string> AdvisorySlugs { get; set; } = new();
+
+    [JsonPropertyName("evidence")]
+    public List<ThreatFamilyEvidenceEntry> Evidence { get; set; } = new();
+}
+
+public sealed class ThreatFamilyEvidenceEntry
+{
+    [JsonPropertyName("kind")]
+    public string Kind { get; set; } = "";
+
+    [JsonPropertyName("value")]
+    public string Value { get; set; } = "";
+
+    [JsonPropertyName("ruleId")]
+    public string? RuleId { get; set; }
+
+    [JsonPropertyName("location")]
+    public string? Location { get; set; }
+
+    [JsonPropertyName("callChainId")]
+    public string? CallChainId { get; set; }
+
+    [JsonPropertyName("dataFlowChainId")]
+    public string? DataFlowChainId { get; set; }
+
+    [JsonPropertyName("pattern")]
+    public string? Pattern { get; set; }
+
+    [JsonPropertyName("methodLocation")]
+    public string? MethodLocation { get; set; }
+
+    [JsonPropertyName("confidence")]
+    public double? Confidence { get; set; }
+}
+
+public sealed class ThreatDispositionEntry
+{
+    [JsonPropertyName("classification")]
+    public string Classification { get; set; } = "";
+
+    [JsonPropertyName("headline")]
+    public string Headline { get; set; } = "";
+
+    [JsonPropertyName("summary")]
+    public string Summary { get; set; } = "";
+
+    [JsonPropertyName("blockingRecommended")]
+    public bool BlockingRecommended { get; set; }
+
+    [JsonPropertyName("primaryThreatFamilyId")]
+    public string? PrimaryThreatFamilyId { get; set; }
+
+    [JsonPropertyName("relatedFindingIds")]
+    public List<string> RelatedFindingIds { get; set; } = new();
 }
 
 public sealed class CallChainEntry
@@ -723,6 +915,10 @@ public sealed class RuleEntry
 [JsonSerializable(typeof(ScanPayload))]
 [JsonSerializable(typeof(DecompilePayload))]
 [JsonSerializable(typeof(AnalyzeSymbolPayload))]
+[JsonSerializable(typeof(AnalysisCompletenessEntry))]
+[JsonSerializable(typeof(DeveloperGuidanceEntry))]
+[JsonSerializable(typeof(ThreatDispositionEntry))]
+[JsonSerializable(typeof(ThreatFamilyEntry))]
 [JsonSerializable(typeof(SymbolEvidenceEntry))]
 [JsonSerializable(typeof(MetadataTableEntry))]
 [JsonSerializable(typeof(List<RuleEntry>))]

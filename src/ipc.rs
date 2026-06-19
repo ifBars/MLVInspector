@@ -11,6 +11,10 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+fn default_true() -> bool {
+    true
+}
+
 // ─── Outbound (Rust → Worker) ────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -239,10 +243,22 @@ pub struct ScanPayload {
     pub schema_version: String,
     pub metadata: ScanMetaEntry,
     pub input: ScanInputEntry,
+    #[serde(default)]
+    pub assembly: Option<ScanAssemblyEntry>,
     pub summary: ScanSummaryEntry,
+    #[serde(default)]
+    pub analysis_completeness: AnalysisCompletenessEntry,
     pub findings: Vec<FindingEntry>,
+    #[serde(default)]
     pub call_chains: Option<Vec<CallChainEntry>>,
+    #[serde(default)]
     pub data_flows: Option<Vec<DataFlowChainEntry>>,
+    #[serde(default)]
+    pub developer_guidance: Option<Vec<DeveloperGuidanceEntry>>,
+    #[serde(default)]
+    pub threat_families: Option<Vec<ThreatFamilyEntry>>,
+    #[serde(default)]
+    pub disposition: Option<ThreatDispositionEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,12 +278,49 @@ pub struct ScanInputEntry {
     pub sha256_hash: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanAssemblyEntry {
+    pub name: Option<String>,
+    pub assembly_version: Option<String>,
+    pub file_version: Option<String>,
+    pub informational_version: Option<String>,
+    pub target_framework: Option<String>,
+    pub module_runtime_version: Option<String>,
+    pub referenced_assemblies: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScanSummaryEntry {
     pub total_findings: i32,
     pub count_by_severity: HashMap<String, i32>,
     pub triggered_rules: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisCompletenessEntry {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default = "default_true")]
+    pub is_complete: bool,
+    #[serde(default)]
+    pub review_recommended: bool,
+    #[serde(default)]
+    pub reasons: Vec<AnalysisCompletenessReasonEntry>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisCompletenessReasonEntry {
+    #[serde(default)]
+    pub reason_id: String,
+    #[serde(default)]
+    pub summary: String,
+    pub phase: Option<String>,
+    pub rule_id: Option<String>,
+    pub location: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -279,8 +332,90 @@ pub struct FindingEntry {
     pub location: String,
     pub description: String,
     pub code_snippet: Option<String>,
+    #[serde(default)]
+    pub risk_score: Option<i32>,
+    #[serde(default)]
+    pub call_chain_id: Option<String>,
+    #[serde(default)]
+    pub data_flow_chain_id: Option<String>,
+    #[serde(default)]
+    pub developer_guidance: Option<DeveloperGuidanceEntry>,
+    #[serde(default)]
     pub call_chain: Option<CallChainEntry>,
+    #[serde(default)]
     pub data_flow_chain: Option<DataFlowChainEntry>,
+    #[serde(default)]
+    pub visibility: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeveloperGuidanceEntry {
+    pub rule_id: Option<String>,
+    pub rule_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub remediation: String,
+    pub documentation_url: Option<String>,
+    pub alternative_apis: Option<Vec<String>>,
+    #[serde(default)]
+    pub is_remediable: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreatFamilyEntry {
+    #[serde(default)]
+    pub family_id: String,
+    #[serde(default)]
+    pub variant_id: String,
+    #[serde(default)]
+    pub display_name: String,
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub match_kind: String,
+    #[serde(default)]
+    pub confidence: f64,
+    #[serde(default)]
+    pub exact_hash_match: bool,
+    #[serde(default)]
+    pub matched_rules: Vec<String>,
+    #[serde(default)]
+    pub advisory_slugs: Vec<String>,
+    #[serde(default)]
+    pub evidence: Vec<ThreatFamilyEvidenceEntry>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreatFamilyEvidenceEntry {
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub value: String,
+    pub rule_id: Option<String>,
+    pub location: Option<String>,
+    pub call_chain_id: Option<String>,
+    pub data_flow_chain_id: Option<String>,
+    pub pattern: Option<String>,
+    pub method_location: Option<String>,
+    pub confidence: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreatDispositionEntry {
+    #[serde(default)]
+    pub classification: String,
+    #[serde(default)]
+    pub headline: String,
+    #[serde(default)]
+    pub summary: String,
+    #[serde(default)]
+    pub blocking_recommended: bool,
+    pub primary_threat_family_id: Option<String>,
+    #[serde(default)]
+    pub related_finding_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

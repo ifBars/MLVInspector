@@ -168,8 +168,8 @@ internal sealed class Dispatcher
         var fileBytes = File.ReadAllBytes(p.Assembly);
         var fileName = Path.GetFileName(p.Assembly);
 
-        var options = ScanResultOptions.ForDesktop(developerMode: false);
-        options.ScanMode = "scan";
+        var options = ScanResultOptions.ForDesktop(developerMode: true);
+        options.ScanMode = "developer";
         options.PlatformVersion = "worker-1.0.0";
 
         var dto = ScanResultMapper.ToDto(findings, fileName, fileBytes, options);
@@ -210,6 +210,7 @@ internal sealed class Dispatcher
                 SizeBytes = (long)dto.Input.SizeBytes,
                 Sha256Hash = dto.Input.Sha256Hash,
             },
+            Assembly = dto.Assembly is null ? null : MapScanAssembly(dto.Assembly),
             Summary = new ScanSummaryEntry
             {
                 TotalFindings = filteredList.Count,
@@ -223,9 +224,13 @@ internal sealed class Dispatcher
                     .OrderBy(x => x)
                     .ToList(),
             },
+            AnalysisCompleteness = MapAnalysisCompleteness(dto.AnalysisCompleteness),
             Findings = filteredList.Select(MapFinding).ToList(),
             CallChains = dto.CallChains?.Select(MapCallChain).ToList(),
             DataFlows = dto.DataFlows?.Select(MapDataFlow).ToList(),
+            DeveloperGuidance = dto.DeveloperGuidance?.Select(MapDeveloperGuidance).ToList(),
+            ThreatFamilies = dto.ThreatFamilies?.Select(MapThreatFamily).ToList(),
+            Disposition = dto.Disposition is null ? null : MapThreatDisposition(dto.Disposition),
         };
     }
 
@@ -2288,6 +2293,32 @@ internal sealed class Dispatcher
         _ => operand.ToString(),
     };
 
+    private static ScanAssemblyEntry MapScanAssembly(AssemblyMetadataDto assembly) => new()
+    {
+        Name = assembly.Name,
+        AssemblyVersion = assembly.AssemblyVersion,
+        FileVersion = assembly.FileVersion,
+        InformationalVersion = assembly.InformationalVersion,
+        TargetFramework = assembly.TargetFramework,
+        ModuleRuntimeVersion = assembly.ModuleRuntimeVersion,
+        ReferencedAssemblies = assembly.ReferencedAssemblies,
+    };
+
+    private static AnalysisCompletenessEntry MapAnalysisCompleteness(AnalysisCompletenessDto completeness) => new()
+    {
+        Status = completeness.Status,
+        IsComplete = completeness.IsComplete,
+        ReviewRecommended = completeness.ReviewRecommended,
+        Reasons = completeness.Reasons.Select(reason => new AnalysisCompletenessReasonEntry
+        {
+            ReasonId = reason.ReasonId,
+            Summary = reason.Summary,
+            Phase = reason.Phase,
+            RuleId = reason.RuleId,
+            Location = reason.Location,
+        }).ToList(),
+    };
+
     private static FindingEntry MapFinding(FindingDto f) => new()
     {
         Id = f.Id,
@@ -2296,8 +2327,60 @@ internal sealed class Dispatcher
         Location = f.Location,
         Description = f.Description,
         CodeSnippet = f.CodeSnippet,
+        RiskScore = f.RiskScore,
+        CallChainId = f.CallChainId,
+        DataFlowChainId = f.DataFlowChainId,
+        DeveloperGuidance = f.DeveloperGuidance != null ? MapDeveloperGuidance(f.DeveloperGuidance) : null,
         CallChain = f.CallChain != null ? MapCallChain(f.CallChain) : null,
         DataFlowChain = f.DataFlowChain != null ? MapDataFlow(f.DataFlowChain) : null,
+        Visibility = f.Visibility,
+    };
+
+    private static DeveloperGuidanceEntry MapDeveloperGuidance(DeveloperGuidanceDto guidance) => new()
+    {
+        RuleId = guidance.RuleId,
+        RuleIds = guidance.RuleIds,
+        Remediation = guidance.Remediation,
+        DocumentationUrl = guidance.DocumentationUrl,
+        AlternativeApis = guidance.AlternativeApis,
+        IsRemediable = guidance.IsRemediable,
+    };
+
+    private static ThreatFamilyEntry MapThreatFamily(ThreatFamilyDto family) => new()
+    {
+        FamilyId = family.FamilyId,
+        VariantId = family.VariantId,
+        DisplayName = family.DisplayName,
+        Summary = family.Summary,
+        MatchKind = family.MatchKind,
+        Confidence = family.Confidence,
+        ExactHashMatch = family.ExactHashMatch,
+        MatchedRules = family.MatchedRules,
+        AdvisorySlugs = family.AdvisorySlugs,
+        Evidence = family.Evidence.Select(MapThreatFamilyEvidence).ToList(),
+    };
+
+    private static ThreatFamilyEvidenceEntry MapThreatFamilyEvidence(ThreatFamilyEvidenceDto evidence) => new()
+    {
+        Kind = evidence.Kind,
+        Value = evidence.Value,
+        RuleId = evidence.RuleId,
+        Location = evidence.Location,
+        CallChainId = evidence.CallChainId,
+        DataFlowChainId = evidence.DataFlowChainId,
+        Pattern = evidence.Pattern,
+        MethodLocation = evidence.MethodLocation,
+        Confidence = evidence.Confidence,
+    };
+
+    private static ThreatDispositionEntry MapThreatDisposition(ThreatDispositionDto disposition) => new()
+    {
+        Classification = disposition.Classification,
+        Headline = disposition.Headline,
+        Summary = disposition.Summary,
+        BlockingRecommended = disposition.BlockingRecommended,
+        PrimaryThreatFamilyId = disposition.PrimaryThreatFamilyId,
+        RelatedFindingIds = disposition.RelatedFindingIds,
     };
 
     private static CallChainEntry MapCallChain(CallChainDto c) => new()
