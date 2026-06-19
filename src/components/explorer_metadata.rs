@@ -3,17 +3,18 @@ use std::collections::BTreeSet;
 use dioxus::prelude::*;
 
 use crate::ipc::{
-    AssemblyMetadataEntry, AssemblyReferenceEntry, AttributeMetadataEntry, ModuleMetadataEntry,
-    ResourceMetadataEntry,
+    AssemblyMetadataEntry, AssemblyReferenceEntry, AttributeMetadataEntry, MetadataTableEntry,
+    ModuleMetadataEntry, ResourceMetadataEntry,
 };
 
 use super::theme::{
-    C_BG_ELEVATED, C_BG_SURFACE, C_BORDER, C_TEXT_MUTED, C_TEXT_PRIMARY, C_TEXT_SECONDARY,
-    FONT_MONO,
+    C_ACCENT_GREEN, C_BG_ELEVATED, C_BG_SURFACE, C_BORDER, C_TEXT_MUTED, C_TEXT_PRIMARY,
+    C_TEXT_SECONDARY, FONT_MONO,
 };
 
-const DEFAULT_COLLAPSED_METADATA_SECTIONS: [&str; 5] = [
+const DEFAULT_COLLAPSED_METADATA_SECTIONS: [&str; 6] = [
     "overview",
+    "tables",
     "modules",
     "references",
     "resources",
@@ -37,6 +38,7 @@ pub(crate) fn has_metadata(metadata: &AssemblyMetadataEntry) -> bool {
         || !metadata.assembly_references.is_empty()
         || !metadata.resources.is_empty()
         || !metadata.custom_attributes.is_empty()
+        || !metadata.metadata_tables.is_empty()
 }
 
 pub(crate) fn default_collapsed_metadata_sections() -> BTreeSet<String> {
@@ -52,11 +54,33 @@ pub(crate) fn AssemblyMetadataView(
     assembly_path: String,
     metadata: AssemblyMetadataEntry,
     collapsed_sections: Signal<BTreeSet<String>>,
+    active_metadata_token: Option<String>,
     framed: bool,
 ) -> Element {
     let display_name = display_or_fallback(&metadata.assembly_name, &assembly_name);
     let summary = metadata_header_summary(&metadata);
     let overview_rows = overview_rows(&metadata, &assembly_name);
+    let active_resource_token = active_metadata_token
+        .as_deref()
+        .filter(|token| resource_token_exists(&metadata.resources, token))
+        .map(str::to_string);
+    let effect_active_resource_token = active_resource_token.clone();
+
+    use_effect(move || {
+        if effect_active_resource_token.is_none() {
+            return;
+        }
+
+        collapsed_sections.write().remove("resources");
+        spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(80)).await;
+            let _ = document::eval(
+                "document.getElementById('metadata-token-target')?.scrollIntoView({behavior:'smooth',block:'center'});",
+            )
+            .await;
+        });
+    });
+
     let container_style = if framed {
         format!(
             "border: 1px solid {C_BORDER}; border-radius: 7px; overflow: hidden; background: {C_BG_SURFACE};"
@@ -129,6 +153,20 @@ pub(crate) fn AssemblyMetadataView(
                 }
 
                 MetadataSection {
+                    section_key: "tables".to_string(),
+                    title: "Metadata tables".to_string(),
+                    count_label: Some(metadata.metadata_tables.len().to_string()),
+                    collapsed_sections,
+                    framed,
+                    is_first: false,
+                    if metadata.metadata_tables.is_empty() {
+                        MetadataEmpty { message: "No metadata table summary exposed by the worker.".to_string() }
+                    } else {
+                        MetadataTableSummary { tables: metadata.metadata_tables.clone() }
+                    }
+                }
+
+                MetadataSection {
                     section_key: "modules".to_string(),
                     title: "Modules".to_string(),
                     count_label: Some(metadata.modules.len().to_string()),
@@ -142,6 +180,7 @@ pub(crate) fn AssemblyMetadataView(
                             MetadataListEntry {
                                 key: "module-{index}",
                                 bordered: index > 0,
+                                active: false,
                                 title: display_or_fallback(&module.name, "Unnamed module"),
                                 subtitle: None,
                                 rows: module_rows(module),
@@ -164,6 +203,7 @@ pub(crate) fn AssemblyMetadataView(
                             MetadataListEntry {
                                 key: "reference-{index}",
                                 bordered: index > 0,
+                                active: false,
                                 title: display_or_fallback(&reference.name, "Unnamed reference"),
                                 subtitle: present_text(reference.version.as_deref()).map(str::to_string),
                                 rows: reference_rows(reference),
@@ -186,6 +226,7 @@ pub(crate) fn AssemblyMetadataView(
                             ResourceEntry {
                                 key: "resource-{index}",
                                 resource: resource.clone(),
+                                active: active_resource_token.as_deref().is_some_and(|token| resource_matches_token(resource, token)),
                                 bordered: index > 0,
                             }
                         }
@@ -354,8 +395,66 @@ fn MetadataEmpty(message: String) -> Element {
 }
 
 #[component]
+fn MetadataTableSummary(tables: Vec<MetadataTableEntry>) -> Element {
+    let rows = metadata_table_rows(&tables);
+
+    rsx! {
+        div {
+            style: "display: flex; flex-direction: column;",
+            div {
+                style: format!(
+                    "display: grid; grid-template-columns: minmax(82px, 0.8fr) minmax(54px, 0.35fr) minmax(56px, 0.35fr) minmax(160px, 1.6fr); \
+                     gap: 8px; padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,0.06); \
+                     color: {C_TEXT_MUTED}; font-size: 8px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;"
+                ),
+                span { "Table" }
+                span { "Token" }
+                span { "Rows" }
+                span { "Meaning" }
+            }
+            for (index, row) in rows.iter().enumerate() {
+                div {
+                    key: "metadata-table-{row.name}-{index}",
+                    style: format!(
+                        "display: grid; grid-template-columns: minmax(82px, 0.8fr) minmax(54px, 0.35fr) minmax(56px, 0.35fr) minmax(160px, 1.6fr); \
+                         gap: 8px; align-items: start; padding: 5px 8px; border-top: {};",
+                        if index == 0 { "0" } else { "1px solid rgba(255,255,255,0.04)" }
+                    ),
+                    span {
+                        style: format!(
+                            "min-width: 0; color: {C_TEXT_PRIMARY}; font-size: 9px; font-weight: 700; font-family: {FONT_MONO}; \
+                             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                        ),
+                        "{row.name}"
+                    }
+                    span {
+                        style: format!(
+                            "color: {C_TEXT_MUTED}; font-size: 9px; font-family: {FONT_MONO};"
+                        ),
+                        "{row.token_prefix}"
+                    }
+                    span {
+                        style: format!(
+                            "color: {C_TEXT_SECONDARY}; font-size: 9px; font-family: {FONT_MONO}; text-align: right;"
+                        ),
+                        "{row.row_count}"
+                    }
+                    span {
+                        style: format!(
+                            "min-width: 0; color: {C_TEXT_SECONDARY}; font-size: 9px; line-height: 1.4; word-break: break-word;"
+                        ),
+                        "{row.description}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[component]
 fn MetadataListEntry(
     bordered: bool,
+    active: bool,
     title: String,
     subtitle: Option<String>,
     rows: Vec<(String, String)>,
@@ -365,11 +464,27 @@ fn MetadataListEntry(
     } else {
         "0"
     };
+    let target_id = if active {
+        Some("metadata-token-target")
+    } else {
+        None
+    };
+    let active_background = if active {
+        "rgba(122, 162, 120, 0.11)"
+    } else {
+        "transparent"
+    };
+    let active_border = if active {
+        format!("2px solid {C_ACCENT_GREEN}")
+    } else {
+        "2px solid transparent".to_string()
+    };
 
     rsx! {
         div {
+            id: target_id,
             style: format!(
-                "display: flex; flex-direction: column; gap: 4px; padding: 6px 8px 7px; border-top: {border_top};"
+                "display: flex; flex-direction: column; gap: 4px; padding: 6px 8px 7px; border-top: {border_top}; border-left: {active_border}; background: {active_background};"
             ),
             div {
                 style: "display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; min-width: 0;",
@@ -396,10 +511,11 @@ fn MetadataListEntry(
 }
 
 #[component]
-fn ResourceEntry(resource: ResourceMetadataEntry, bordered: bool) -> Element {
+fn ResourceEntry(resource: ResourceMetadataEntry, bordered: bool, active: bool) -> Element {
     rsx! {
         MetadataListEntry {
             bordered,
+            active,
             title: display_or_fallback(&resource.name, "Unnamed resource"),
             subtitle: present_text(non_empty_string(&resource.resource_type)).map(str::to_string),
             rows: resource_rows(&resource),
@@ -533,12 +649,60 @@ fn reference_rows(reference: &AssemblyReferenceEntry) -> Vec<(String, String)> {
 
 fn resource_rows(resource: &ResourceMetadataEntry) -> Vec<(String, String)> {
     let mut rows = Vec::new();
+    push_optional_row(&mut rows, "Token", resource.metadata_token.as_deref());
     push_optional_row(&mut rows, "Attributes", resource.attributes.as_deref());
     if let Some(size) = format_present_bytes(resource.size_bytes) {
         rows.push(("Size".to_string(), size));
     }
+    push_optional_row(&mut rows, "SHA-256", resource.sha256_hash.as_deref());
     push_optional_row(&mut rows, "Source", resource.implementation.as_deref());
+    push_optional_row(&mut rows, "Preview kind", resource.preview_kind.as_deref());
+    if let Some(preview) = resource_preview_display(resource) {
+        rows.push(("Preview".to_string(), preview));
+    }
     rows
+}
+
+fn metadata_table_rows(tables: &[MetadataTableEntry]) -> Vec<MetadataTableEntry> {
+    let mut rows = tables
+        .iter()
+        .filter(|table| table.row_count > 0)
+        .cloned()
+        .collect::<Vec<_>>();
+    rows.sort_by(|a, b| a.name.cmp(&b.name));
+    rows
+}
+
+fn resource_token_exists(resources: &[ResourceMetadataEntry], token: &str) -> bool {
+    resources
+        .iter()
+        .any(|resource| resource_matches_token(resource, token))
+}
+
+fn resource_matches_token(resource: &ResourceMetadataEntry, token: &str) -> bool {
+    let Some(resource_token) = resource.metadata_token.as_deref() else {
+        return false;
+    };
+
+    normalize_metadata_token(resource_token) == normalize_metadata_token(token)
+}
+
+fn normalize_metadata_token(token: &str) -> String {
+    token
+        .trim()
+        .trim_start_matches("0x")
+        .trim_start_matches("0X")
+        .to_ascii_lowercase()
+}
+
+fn resource_preview_display(resource: &ResourceMetadataEntry) -> Option<String> {
+    let preview = present_text(resource.preview.as_deref())?;
+    let suffix = if resource.preview_truncated {
+        "\n..."
+    } else {
+        ""
+    };
+    Some(format!("{preview}{suffix}"))
 }
 
 fn push_optional_row(rows: &mut Vec<(String, String)>, label: &str, value: Option<&str>) {
@@ -613,15 +777,17 @@ fn format_bytes(size: Option<i64>) -> String {
 mod tests {
     use super::{
         default_collapsed_metadata_sections, format_bytes, has_metadata, metadata_header_summary,
-        overview_rows, target_framework_label, target_framework_value,
+        metadata_table_rows, overview_rows, resource_matches_token, resource_preview_display,
+        resource_rows, target_framework_label, target_framework_value,
     };
-    use crate::ipc::AssemblyMetadataEntry;
+    use crate::ipc::{AssemblyMetadataEntry, MetadataTableEntry, ResourceMetadataEntry};
 
     #[test]
     fn default_collapsed_sections_start_with_every_section_closed() {
         let sections = default_collapsed_metadata_sections();
 
         assert!(sections.contains("overview"));
+        assert!(sections.contains("tables"));
         assert!(sections.contains("modules"));
         assert!(sections.contains("references"));
         assert!(sections.contains("resources"));
@@ -637,6 +803,21 @@ mod tests {
     fn has_metadata_returns_true_for_scalar_fields() {
         let metadata = AssemblyMetadataEntry {
             target_framework: Some("net8.0".to_string()),
+            ..AssemblyMetadataEntry::default()
+        };
+
+        assert!(has_metadata(&metadata));
+    }
+
+    #[test]
+    fn has_metadata_returns_true_for_metadata_tables() {
+        let metadata = AssemblyMetadataEntry {
+            metadata_tables: vec![MetadataTableEntry {
+                name: "TypeDef".to_string(),
+                token_prefix: "0x02".to_string(),
+                row_count: 1,
+                description: "Defined types".to_string(),
+            }],
             ..AssemblyMetadataEntry::default()
         };
 
@@ -721,5 +902,76 @@ mod tests {
     #[test]
     fn format_bytes_formats_binary_units() {
         assert_eq!(format_bytes(Some(1536)), "1.5 KB");
+    }
+
+    #[test]
+    fn resource_rows_include_token_hash_and_text_preview() {
+        let resource = ResourceMetadataEntry {
+            name: "payload.txt".to_string(),
+            resource_type: "Embedded".to_string(),
+            attributes: Some("Public".to_string()),
+            size_bytes: Some(12),
+            implementation: None,
+            metadata_token: Some("0x28000001".to_string()),
+            sha256_hash: Some("abc123".to_string()),
+            preview_kind: Some("text".to_string()),
+            preview: Some("powershell".to_string()),
+            preview_truncated: true,
+        };
+
+        let rows = resource_rows(&resource);
+
+        assert!(rows
+            .iter()
+            .any(|(label, value)| label == "Token" && value == "0x28000001"));
+        assert!(rows
+            .iter()
+            .any(|(label, value)| label == "SHA-256" && value == "abc123"));
+        assert_eq!(
+            resource_preview_display(&resource),
+            Some("powershell\n...".to_string())
+        );
+    }
+
+    #[test]
+    fn resource_matches_token_ignores_prefix_and_case() {
+        let resource = ResourceMetadataEntry {
+            name: "payload.txt".to_string(),
+            resource_type: "Embedded".to_string(),
+            metadata_token: Some("0x2800000A".to_string()),
+            ..Default::default()
+        };
+
+        assert!(resource_matches_token(&resource, "2800000a"));
+        assert!(resource_matches_token(&resource, "0X2800000A"));
+        assert!(!resource_matches_token(&resource, "0600000A"));
+    }
+
+    #[test]
+    fn metadata_table_rows_filters_empty_and_sorts_by_name() {
+        let rows = metadata_table_rows(&[
+            MetadataTableEntry {
+                name: "TypeDef".to_string(),
+                token_prefix: "0x02".to_string(),
+                row_count: 2,
+                description: "Defined types".to_string(),
+            },
+            MetadataTableEntry {
+                name: "AssemblyRef".to_string(),
+                token_prefix: "0x23".to_string(),
+                row_count: 4,
+                description: "References".to_string(),
+            },
+            MetadataTableEntry {
+                name: "Event".to_string(),
+                token_prefix: "0x14".to_string(),
+                row_count: 0,
+                description: "Events".to_string(),
+            },
+        ]);
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "AssemblyRef");
+        assert_eq!(rows[1].name, "TypeDef");
     }
 }

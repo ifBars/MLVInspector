@@ -1,12 +1,16 @@
 /// Pure helper functions for data extraction and UI utilities.
 use std::collections::BTreeMap;
 
-use crate::ipc::{DecompileSourceSpan, FindingEntry, TypeEntry};
+use crate::ipc::{
+    AttributeMetadataEntry, CallChainEntry, DataFlowChainEntry, DecompileSourceSpan, FindingEntry,
+    MemberMetadataEntry, TypeEntry,
+};
 use crate::types::AnalysisResult;
 
 use super::view_models::{
-    UiFinding, UiFindingMethodSpan, UiFindingNavigation, UiInstruction, UiMethod, UiNamespaceGroup,
-    UiTypeGroup,
+    UiAttributeMetadata, UiFinding, UiFindingMethodSpan, UiFindingNavigation, UiInstruction,
+    UiMemberMetadata, UiMethod, UiNamespaceGroup, UiScanNeighborhood, UiScanNeighborhoodNode,
+    UiTypeDetails, UiTypeGroup,
 };
 
 // Data extraction
@@ -33,6 +37,7 @@ pub fn extract_methods(result: &AnalysisResult) -> Vec<UiMethod> {
             UiMethod {
                 type_name: m.type_name.clone(),
                 method_name: m.method_name.clone(),
+                metadata_token: m.metadata_token.clone(),
                 signature: m.signature.clone(),
                 instructions,
             }
@@ -66,6 +71,43 @@ pub fn extract_findings(result: &AnalysisResult) -> Vec<UiFinding> {
         .collect()
 }
 
+pub fn extract_scan_neighborhoods(
+    result: &AnalysisResult,
+    type_name: &str,
+    method_name: Option<&str>,
+) -> Vec<UiScanNeighborhood> {
+    let Some(scan) = result.scan.as_ref() else {
+        return Vec::new();
+    };
+
+    scan.findings
+        .iter()
+        .enumerate()
+        .filter(|(_, finding)| finding_touches_symbol(finding, type_name, method_name))
+        .map(|(finding_index, finding)| build_scan_neighborhood(finding_index, finding))
+        .collect()
+}
+
+pub fn extract_type_details(result: &AnalysisResult, type_name: &str) -> Option<UiTypeDetails> {
+    let explore = result.explore.as_ref()?;
+    let ty = explore.types.iter().find(|ty| ty.type_name == type_name)?;
+
+    Some(UiTypeDetails {
+        full_type_name: ty.type_name.clone(),
+        metadata_token: ty.metadata_token.clone(),
+        kind: normalize_type_kind(&ty.kind),
+        fields: ty.fields.iter().map(map_member_metadata).collect(),
+        properties: ty.properties.iter().map(map_member_metadata).collect(),
+        events: ty.events.iter().map(map_member_metadata).collect(),
+        nested_types: ty.nested_types.iter().map(map_member_metadata).collect(),
+        custom_attributes: ty
+            .custom_attributes
+            .iter()
+            .map(map_attribute_metadata)
+            .collect(),
+    })
+}
+
 pub fn group_types_by_namespace(
     types: &[TypeEntry],
     methods: &[UiMethod],
@@ -81,6 +123,7 @@ pub fn group_types_by_namespace(
             UiTypeGroup {
                 full_type_name: full_type_name.clone(),
                 display_name: display_name_for_type(&full_type_name),
+                metadata_token: ty.metadata_token.clone(),
                 kind: normalize_type_kind(&ty.kind),
                 methods: Vec::new(),
             },
@@ -97,6 +140,7 @@ pub fn group_types_by_namespace(
             .or_insert_with(|| UiTypeGroup {
                 full_type_name: full_type_name.clone(),
                 display_name: display_name_for_type(&full_type_name),
+                metadata_token: None,
                 kind: "class".to_string(),
                 methods: Vec::new(),
             });
@@ -124,6 +168,207 @@ pub fn group_types_by_namespace(
             }
         })
         .collect()
+}
+
+fn map_member_metadata(member: &MemberMetadataEntry) -> UiMemberMetadata {
+    UiMemberMetadata {
+        name: member.name.clone(),
+        metadata_token: member.metadata_token.clone(),
+        kind: member.kind.clone(),
+        signature: member.signature.clone(),
+        attributes: member.attributes.clone(),
+    }
+}
+
+fn map_attribute_metadata(attribute: &AttributeMetadataEntry) -> UiAttributeMetadata {
+    UiAttributeMetadata {
+        attribute_type: attribute.attribute_type.clone(),
+        summary: attribute.summary.clone(),
+    }
+}
+
+fn build_scan_neighborhood(finding_index: usize, finding: &FindingEntry) -> UiScanNeighborhood {
+    let navigation = build_finding_navigation(finding);
+    let (chain_kind, title, mut nodes) = if let Some(data_flow) = finding.data_flow_chain.as_ref() {
+        (
+            "Data Flow".to_string(),
+            data_flow_title(data_flow),
+            data_flow
+                .nodes
+                .iter()
+                .map(|node| UiScanNeighborhoodNode {
+                    node_type: node.node_type.clone(),
+                    location: node.location.clone(),
+                    operation: node.operation.clone(),
+                    description: node.data_description.clone(),
+                    instruction_offset: Some(node.instruction_offset),
+                })
+                .collect::<Vec<_>>(),
+        )
+    } else if let Some(call_chain) = finding.call_chain.as_ref() {
+        (
+            "Call Chain".to_string(),
+            call_chain_title(call_chain),
+            call_chain
+                .nodes
+                .iter()
+                .map(|node| UiScanNeighborhoodNode {
+                    node_type: node.node_type.clone(),
+                    location: node.location.clone(),
+                    operation: String::new(),
+                    description: node.description.clone(),
+                    instruction_offset: None,
+                })
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        (
+            "Finding".to_string(),
+            finding
+                .rule_id
+                .clone()
+                .unwrap_or_else(|| "UnknownRule".to_string()),
+            Vec::new(),
+        )
+    };
+
+    if nodes.is_empty() {
+        nodes.push(UiScanNeighborhoodNode {
+            node_type: "finding".to_string(),
+            location: finding.location.clone(),
+            operation: String::new(),
+            description: finding.description.clone(),
+            instruction_offset: parse_il_offset_from_snippet(
+                finding.code_snippet.as_deref().unwrap_or(""),
+            )
+            .map(|offset| offset as i32),
+        });
+    }
+
+    UiScanNeighborhood {
+        finding_index,
+        rule_id: finding
+            .rule_id
+            .clone()
+            .unwrap_or_else(|| "UnknownRule".to_string()),
+        severity: finding.severity.clone(),
+        chain_kind,
+        title,
+        description: finding.description.clone(),
+        location: finding.location.clone(),
+        primary_type_name: navigation
+            .as_ref()
+            .map(|navigation| navigation.primary_type_name.clone()),
+        primary_method_name: navigation
+            .as_ref()
+            .map(|navigation| navigation.primary_method_name.clone()),
+        nodes,
+    }
+}
+
+fn data_flow_title(data_flow: &DataFlowChainEntry) -> String {
+    if !data_flow.pattern.is_empty() {
+        data_flow.pattern.clone()
+    } else {
+        data_flow.description.clone()
+    }
+}
+
+fn call_chain_title(call_chain: &CallChainEntry) -> String {
+    if !call_chain.description.is_empty() {
+        call_chain.description.clone()
+    } else {
+        call_chain.rule_id.clone()
+    }
+}
+
+fn finding_touches_symbol(
+    finding: &FindingEntry,
+    type_name: &str,
+    method_name: Option<&str>,
+) -> bool {
+    if location_matches_symbol(&finding.location, type_name, method_name) {
+        return true;
+    }
+
+    if let Some(navigation) = build_finding_navigation(finding) {
+        if navigation
+            .method_spans
+            .iter()
+            .any(|span| symbol_matches(&span.type_name, &span.method_name, type_name, method_name))
+        {
+            return true;
+        }
+    }
+
+    finding
+        .call_chain
+        .as_ref()
+        .is_some_and(|chain| call_chain_touches_symbol(chain, type_name, method_name))
+        || finding
+            .data_flow_chain
+            .as_ref()
+            .is_some_and(|chain| data_flow_touches_symbol(chain, type_name, method_name))
+}
+
+fn call_chain_touches_symbol(
+    chain: &CallChainEntry,
+    type_name: &str,
+    method_name: Option<&str>,
+) -> bool {
+    chain
+        .nodes
+        .iter()
+        .any(|node| location_matches_symbol(&node.location, type_name, method_name))
+}
+
+fn data_flow_touches_symbol(
+    chain: &DataFlowChainEntry,
+    type_name: &str,
+    method_name: Option<&str>,
+) -> bool {
+    location_matches_symbol(&chain.method_location, type_name, method_name)
+        || chain.involved_methods.as_ref().is_some_and(|methods| {
+            methods
+                .iter()
+                .any(|method| location_matches_symbol(method, type_name, method_name))
+        })
+        || chain.nodes.iter().any(|node| {
+            location_matches_symbol(&node.location, type_name, method_name)
+                || node
+                    .method_key
+                    .as_deref()
+                    .is_some_and(|key| location_matches_symbol(key, type_name, method_name))
+                || node
+                    .target_method_key
+                    .as_deref()
+                    .is_some_and(|key| location_matches_symbol(key, type_name, method_name))
+        })
+}
+
+fn location_matches_symbol(location: &str, type_name: &str, method_name: Option<&str>) -> bool {
+    parse_method_location(location)
+        .map(|(location_type, location_method)| {
+            symbol_matches(&location_type, &location_method, type_name, method_name)
+        })
+        .unwrap_or_else(|| {
+            method_name.is_none() && type_name_mentions_candidate(location, type_name)
+        })
+}
+
+fn symbol_matches(
+    location_type: &str,
+    location_method: &str,
+    type_name: &str,
+    method_name: Option<&str>,
+) -> bool {
+    if !type_name_mentions_candidate(location_type, type_name) {
+        return false;
+    }
+
+    method_name
+        .map(|method_name| method_name_mentions_candidate(location_method, method_name))
+        .unwrap_or(true)
 }
 
 fn namespace_for_type(full_type_name: &str) -> String {
@@ -233,6 +478,19 @@ pub fn parse_il_offsets_from_snippet(snippet: &str) -> Vec<i64> {
 
 pub fn parse_method_location(location: &str) -> Option<(String, String)> {
     let location = strip_trailing_location_suffix(location.trim());
+    if let Some(type_name) = location.strip_suffix("..cctor") {
+        let type_name = type_name.trim();
+        if !type_name.is_empty() {
+            return Some((type_name.to_string(), ".cctor".to_string()));
+        }
+    }
+    if let Some(type_name) = location.strip_suffix("..ctor") {
+        let type_name = type_name.trim();
+        if !type_name.is_empty() {
+            return Some((type_name.to_string(), ".ctor".to_string()));
+        }
+    }
+
     let (type_name, method_name) = location
         .rsplit_once("::")
         .or_else(|| location.rsplit_once('.'))?;
@@ -244,6 +502,54 @@ pub fn parse_method_location(location: &str) -> Option<(String, String)> {
     }
 
     Some((type_name.to_string(), method_name.to_string()))
+}
+
+fn parse_labeled_method_locations(snippet: &str) -> Vec<((String, String), String)> {
+    let mut locations = Vec::new();
+
+    for line in snippet.lines() {
+        let line = line.trim();
+        let Some((_, value)) = line.split_once(':') else {
+            continue;
+        };
+
+        for token in method_location_tokens(value) {
+            let Some(method_location) = parse_method_location(&token) else {
+                continue;
+            };
+
+            if !locations
+                .iter()
+                .any(|(existing, _)| existing == &method_location)
+            {
+                locations.push((method_location, line.to_string()));
+            }
+        }
+    }
+
+    locations
+}
+
+fn method_location_tokens(value: &str) -> Vec<String> {
+    value
+        .split([' ', '\t', ',', ';'])
+        .map(|token| {
+            token
+                .trim()
+                .trim_matches(|ch: char| matches!(ch, '(' | ')' | '[' | ']' | '{' | '}' | '`'))
+                .trim_matches('.')
+        })
+        .filter(|token| {
+            !token.is_empty()
+                && !token.contains("://")
+                && token.contains('.')
+                && token.chars().all(|ch| {
+                    ch.is_ascii_alphanumeric()
+                        || matches!(ch, '_' | '.' | '/' | '<' | '>' | '`' | ':' | '-')
+                })
+        })
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 pub fn resolve_method_reference(
@@ -411,13 +717,23 @@ pub fn now_ts() -> u64 {
 
 fn build_finding_navigation(finding: &FindingEntry) -> Option<UiFindingNavigation> {
     let mut method_spans = Vec::new();
+    let code_snippet = finding.code_snippet.as_deref().unwrap_or("");
 
     push_method_span(
         &mut method_spans,
         parse_method_location(&finding.location),
-        parse_il_offsets_from_snippet(finding.code_snippet.as_deref().unwrap_or("")),
-        snippets_for_csharp_matching(finding.code_snippet.as_deref().unwrap_or("")),
+        parse_il_offsets_from_snippet(code_snippet),
+        snippets_for_csharp_matching(code_snippet),
     );
+
+    for (method_location, snippet_line) in parse_labeled_method_locations(code_snippet) {
+        push_method_span(
+            &mut method_spans,
+            Some(method_location),
+            Vec::new(),
+            vec![snippet_line],
+        );
+    }
 
     if let Some(call_chain) = finding.call_chain.as_ref() {
         for node in &call_chain.nodes {
@@ -660,21 +976,33 @@ fn search_lines_match(source_line: &str, snippet_line: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        assembly_metadata_tab_id, group_types_by_namespace, highlighted_csharp_lines,
-        highlighted_csharp_lines_from_source_spans, parse_il_offset_from_snippet,
-        parse_il_offsets_from_snippet, resolve_finding_target, resolve_method_reference,
-        should_retry_decompile_source,
+        assembly_metadata_tab_id, extract_scan_neighborhoods, group_types_by_namespace,
+        highlighted_csharp_lines, highlighted_csharp_lines_from_source_spans,
+        parse_il_offset_from_snippet, parse_il_offsets_from_snippet, resolve_finding_target,
+        resolve_method_reference, should_retry_decompile_source,
     };
     use crate::{
         components::view_models::{UiFinding, UiFindingMethodSpan, UiFindingNavigation, UiMethod},
-        ipc::{DecompileSourceSpan, TypeEntry},
+        ipc::{
+            AttributeMetadataEntry, DataFlowChainEntry, DataFlowNodeEntry, DecompileSourceSpan,
+            ExplorePayload, FindingEntry, MemberMetadataEntry, ScanInputEntry, ScanMetaEntry,
+            ScanPayload, ScanSummaryEntry, TypeEntry,
+        },
+        types::AnalysisResult,
     };
+    use std::collections::HashMap;
 
     #[test]
     fn group_types_by_namespace_includes_structs_without_methods() {
         let types = vec![TypeEntry {
             type_name: "Demo.Models.Point".to_string(),
+            metadata_token: Some("0x02000004".to_string()),
             kind: "struct".to_string(),
+            fields: Vec::new(),
+            properties: Vec::new(),
+            events: Vec::new(),
+            nested_types: Vec::new(),
+            custom_attributes: Vec::new(),
             methods: Vec::new(),
         }];
 
@@ -684,8 +1012,82 @@ mod tests {
         assert_eq!(groups[0].namespace_name, "Demo.Models");
         assert_eq!(groups[0].types.len(), 1);
         assert_eq!(groups[0].types[0].display_name, "Point");
+        assert_eq!(
+            groups[0].types[0].metadata_token.as_deref(),
+            Some("0x02000004")
+        );
         assert_eq!(groups[0].types[0].kind, "struct");
         assert!(groups[0].types[0].methods.is_empty());
+    }
+
+    #[test]
+    fn extract_type_details_projects_member_metadata() {
+        let result = AnalysisResult {
+            assembly_path: "C:/sample.dll".to_string(),
+            mode: "combined".to_string(),
+            explore: Some(ExplorePayload {
+                assembly_path: "C:/sample.dll".to_string(),
+                assembly_metadata: Default::default(),
+                methods: Vec::new(),
+                types: vec![TypeEntry {
+                    type_name: "Demo.Widget".to_string(),
+                    metadata_token: Some("0x02000004".to_string()),
+                    kind: "class".to_string(),
+                    fields: vec![MemberMetadataEntry {
+                        name: "counter".to_string(),
+                        metadata_token: Some("0x04000001".to_string()),
+                        kind: "field".to_string(),
+                        signature: "private Int32 counter".to_string(),
+                        attributes: Some("Private".to_string()),
+                    }],
+                    properties: vec![MemberMetadataEntry {
+                        name: "Name".to_string(),
+                        metadata_token: Some("0x17000001".to_string()),
+                        kind: "property".to_string(),
+                        signature: "String Name {get; set}".to_string(),
+                        attributes: None,
+                    }],
+                    events: vec![MemberMetadataEntry {
+                        name: "Changed".to_string(),
+                        metadata_token: Some("0x14000001".to_string()),
+                        kind: "event".to_string(),
+                        signature: "EventHandler Changed".to_string(),
+                        attributes: None,
+                    }],
+                    nested_types: vec![MemberMetadataEntry {
+                        name: "Demo.Widget/Child".to_string(),
+                        metadata_token: Some("0x02000005".to_string()),
+                        kind: "class".to_string(),
+                        signature: "Demo.Widget/Child".to_string(),
+                        attributes: None,
+                    }],
+                    custom_attributes: vec![AttributeMetadataEntry {
+                        attribute_type: "System.ObsoleteAttribute".to_string(),
+                        summary: Some("ctor(\"probe\")".to_string()),
+                    }],
+                    methods: Vec::new(),
+                }],
+            }),
+            scan: None,
+            stderr: String::new(),
+        };
+
+        let details = super::extract_type_details(&result, "Demo.Widget")
+            .expect("type details should be projected");
+
+        assert_eq!(details.full_type_name, "Demo.Widget");
+        assert_eq!(details.fields[0].name, "counter");
+        assert_eq!(
+            details.properties[0].metadata_token.as_deref(),
+            Some("0x17000001")
+        );
+        assert_eq!(details.events[0].signature, "EventHandler Changed");
+        assert_eq!(details.nested_types[0].kind, "class");
+        assert_eq!(
+            details.custom_attributes[0].attribute_type,
+            "System.ObsoleteAttribute"
+        );
+        assert!(super::extract_type_details(&result, "Demo.Missing").is_none());
     }
 
     #[test]
@@ -767,10 +1169,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_method_location_handles_static_constructor_anchor() {
+        assert_eq!(
+            super::parse_method_location("Unity.UnityCalifornia..cctor"),
+            Some(("Unity.UnityCalifornia".to_string(), ".cctor".to_string()))
+        );
+    }
+
+    #[test]
     fn resolve_method_reference_matches_signature_style_location() {
         let methods = vec![UiMethod {
             type_name: "Demo.Service".to_string(),
             method_name: "Run".to_string(),
+            metadata_token: None,
             signature: String::new(),
             instructions: Vec::new(),
         }];
@@ -786,6 +1197,7 @@ mod tests {
         let methods = vec![UiMethod {
             type_name: "CustomerSearcher.Core".to_string(),
             method_name: "DownloadRun".to_string(),
+            metadata_token: None,
             signature: String::new(),
             instructions: Vec::new(),
         }];
@@ -829,6 +1241,7 @@ mod tests {
         let methods = vec![UiMethod {
             type_name: "CustomerSearcher.Core".to_string(),
             method_name: "DownloadRun".to_string(),
+            metadata_token: None,
             signature: String::new(),
             instructions: Vec::new(),
         }];
@@ -858,5 +1271,128 @@ mod tests {
                 "DownloadRun".to_string()
             ))
         );
+    }
+
+    #[test]
+    fn resolve_finding_target_uses_obfuscated_rule_labeled_snippet_locations() {
+        let finding = FindingEntry {
+            id: None,
+            rule_id: Some("ObfuscatedReflectiveExecutionRule".to_string()),
+            severity: "Critical".to_string(),
+            location: "Unity".to_string(),
+            description: String::new(),
+            code_snippet: Some(
+                "remote config: Unity.UnityCalifornia..cctor\n\
+                 hex decode: Unity.UnityOhio.Doral\n\
+                 byte string decode: Unity.UnityOhio.Doral\n\
+                 property assignment: Unity.UnityMichigan.Kool\n\
+                 reflection invoke: Unity.UnityMichigan.Kool\n\
+                 staging: WebClient.DownloadString -> GetTempFileName + .cmd -> File.WriteAllText\n\
+                 execution: ProcessStartInfo FileName=cmd.exe Arguments=/c WindowStyle=Hidden UseShellExecute=True"
+                    .to_string(),
+            ),
+            call_chain: None,
+            data_flow_chain: None,
+        };
+        let navigation = super::build_finding_navigation(&finding)
+            .expect("snippet anchors should produce navigation");
+        let ui_finding = UiFinding {
+            rule_id: "ObfuscatedReflectiveExecutionRule".to_string(),
+            severity: "Critical".to_string(),
+            location: "Unity".to_string(),
+            description: String::new(),
+            code_snippet: finding.code_snippet.unwrap_or_default(),
+            il_offset: None,
+            navigation: Some(navigation),
+        };
+        let methods = vec![UiMethod {
+            type_name: "Unity.UnityMichigan".to_string(),
+            method_name: "Kool".to_string(),
+            metadata_token: Some("0x06000009".to_string()),
+            signature: String::new(),
+            instructions: Vec::new(),
+        }];
+
+        assert_eq!(
+            resolve_finding_target(&methods, &ui_finding),
+            Some(("Unity.UnityMichigan".to_string(), "Kool".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_scan_neighborhoods_matches_data_flow_nodes_for_method() {
+        let result = AnalysisResult {
+            assembly_path: r"C:\samples\First.dll".to_string(),
+            mode: "scan".to_string(),
+            explore: None,
+            scan: Some(ScanPayload {
+                assembly_path: r"C:\samples\First.dll".to_string(),
+                schema_version: "1.2.0".to_string(),
+                metadata: ScanMetaEntry {
+                    scanner_version: "test".to_string(),
+                    timestamp: "2026-06-17T00:00:00Z".to_string(),
+                    scan_mode: "static".to_string(),
+                    platform: "test".to_string(),
+                },
+                input: ScanInputEntry {
+                    file_name: "First.dll".to_string(),
+                    size_bytes: 10,
+                    sha256_hash: None,
+                },
+                summary: ScanSummaryEntry {
+                    total_findings: 1,
+                    count_by_severity: HashMap::new(),
+                    triggered_rules: vec!["DataFlowAnalysis".to_string()],
+                },
+                findings: vec![FindingEntry {
+                    id: Some("finding-1".to_string()),
+                    rule_id: Some("DataFlowAnalysis".to_string()),
+                    severity: "High".to_string(),
+                    location: "Example.Loader.Run".to_string(),
+                    description: "Network data reaches process execution".to_string(),
+                    code_snippet: None,
+                    call_chain: None,
+                    data_flow_chain: Some(DataFlowChainEntry {
+                        id: "flow-1".to_string(),
+                        description: "download and execute".to_string(),
+                        severity: "High".to_string(),
+                        pattern: "DownloadAndExecute".to_string(),
+                        source_variable: Some("payload".to_string()),
+                        method_location: "Example.Loader.Run".to_string(),
+                        is_cross_method: Some(true),
+                        involved_methods: Some(vec!["Example.Loader.Download".to_string()]),
+                        nodes: vec![DataFlowNodeEntry {
+                            node_type: "sink".to_string(),
+                            location: "Example.Loader.Run".to_string(),
+                            operation: "Process.Start".to_string(),
+                            data_description: "payload execution".to_string(),
+                            instruction_offset: 42,
+                            method_key: Some("Example.Loader.Run".to_string()),
+                            is_method_boundary: Some(false),
+                            target_method_key: None,
+                            code_snippet: Some("IL_002A call Process.Start".to_string()),
+                        }],
+                    }),
+                }],
+                call_chains: None,
+                data_flows: None,
+            }),
+            stderr: String::new(),
+        };
+
+        let neighborhoods = extract_scan_neighborhoods(&result, "Example.Loader", Some("Run"));
+
+        assert_eq!(neighborhoods.len(), 1);
+        assert_eq!(neighborhoods[0].finding_index, 0);
+        assert_eq!(neighborhoods[0].rule_id, "DataFlowAnalysis");
+        assert_eq!(neighborhoods[0].chain_kind, "Data Flow");
+        assert_eq!(neighborhoods[0].title, "DownloadAndExecute");
+        assert_eq!(neighborhoods[0].nodes[0].instruction_offset, Some(42));
+
+        let type_neighborhoods = extract_scan_neighborhoods(&result, "Example.Loader", None);
+        assert_eq!(type_neighborhoods.len(), 1);
+
+        let unrelated = extract_scan_neighborhoods(&result, "Example.Other", Some("Run"));
+        assert!(unrelated.is_empty());
     }
 }

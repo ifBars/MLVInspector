@@ -63,6 +63,7 @@ internal sealed class Dispatcher
                     {
                         TypeName = type.FullName,
                         MethodName = method.Name,
+                        MetadataToken = FormatMetadataToken(method.MetadataToken),
                         Signature = FormatSignature(method),
                         HasBody = method.HasBody,
                     };
@@ -96,7 +97,16 @@ internal sealed class Dispatcher
                 types.Add(new TypeEntry
                 {
                     TypeName = type.FullName,
+                    MetadataToken = FormatMetadataToken(type.MetadataToken),
                     Kind = ClassifyTypeKind(type),
+                    Fields = type.Fields.Select(MapField).ToList(),
+                    Properties = type.Properties.Select(MapProperty).ToList(),
+                    Events = type.Events.Select(MapEvent).ToList(),
+                    NestedTypes = type.NestedTypes
+                        .Where(nested => !IsCompilerGeneratedType(nested))
+                        .Select(MapNestedType)
+                        .ToList(),
+                    CustomAttributes = type.CustomAttributes.Select(MapAttribute).ToList(),
                     Methods = typeMethods,
                 });
             }
@@ -315,6 +325,301 @@ internal sealed class Dispatcher
         };
     }
 
+    public AnalyzeSymbolPayload AnalyzeSymbol(AnalyzeSymbolParams p)
+    {
+        if (string.IsNullOrWhiteSpace(p.TypeName))
+            throw new ArgumentException("typeName is required");
+
+        var assembly = _cache.Load(p.Assembly);
+        var targetType = FindTypeDefinition(assembly, p.TypeName)
+            ?? throw new ArgumentException($"type not found: {p.TypeName}");
+        var targetMethod = string.IsNullOrWhiteSpace(p.MethodName)
+            ? null
+            : targetType.Methods.FirstOrDefault(method =>
+                string.Equals(method.Name, p.MethodName, StringComparison.Ordinal));
+
+        if (!string.IsNullOrWhiteSpace(p.MethodName) && targetMethod == null)
+            throw new ArgumentException($"method not found: {p.TypeName}.{p.MethodName}");
+
+        var maxDepth = ClampAnalyzeDepth(p.MaxDepth);
+        if (!string.IsNullOrWhiteSpace(p.MetadataToken) &&
+            TryAnalyzeMemberByToken(assembly, p, targetType, targetMethod, maxDepth) is { } memberPayload)
+        {
+            return memberPayload;
+        }
+
+        var callGraph = BuildCallGraph(assembly);
+        var callers = targetMethod != null
+            ? ExpandCallers(callGraph, targetMethod, maxDepth)
+            : DirectTypeCallers(callGraph, targetType);
+        var callees = targetMethod != null
+            ? ExpandCallees(callGraph, targetMethod, maxDepth)
+            : new List<SymbolReferenceEntry>();
+        var evidence = new List<SymbolEvidenceEntry>();
+        var evidenceScope = targetMethod != null
+            ? new[] { targetMethod }
+            : targetType.Methods.Where(method => method.HasBody).ToArray();
+
+        foreach (var method in evidenceScope)
+        {
+            if (!method.HasBody)
+                continue;
+
+            foreach (var instruction in method.Body.Instructions)
+            {
+                CollectSymbolEvidence(evidence, targetType, method, instruction);
+            }
+        }
+
+        return new AnalyzeSymbolPayload
+        {
+            AssemblyPath = p.Assembly,
+            TypeName = targetType.FullName,
+            MethodName = targetMethod?.Name,
+            TargetSignature = targetMethod != null ? FormatSignature(targetMethod) : targetType.FullName,
+            MaxDepth = maxDepth,
+            Callers = DeduplicateSymbolReferences(callers),
+            Callees = DeduplicateSymbolReferences(callees),
+            Evidence = DeduplicateSymbolEvidence(evidence),
+        };
+    }
+
+    private static AnalyzeSymbolPayload? TryAnalyzeMemberByToken(
+        AssemblyDefinition assembly,
+        AnalyzeSymbolParams request,
+        TypeDefinition requestedType,
+        MethodDefinition? requestedMethod,
+        int maxDepth)
+    {
+        var tokenValue = ParseMetadataToken(request.MetadataToken);
+        if (tokenValue == null)
+            return null;
+
+        if (requestedType.MetadataToken.ToInt32() == tokenValue ||
+            requestedMethod?.MetadataToken.ToInt32() == tokenValue)
+        {
+            return null;
+        }
+
+        var allTypes = assembly.Modules.SelectMany(module => EnumerateTypes(module)).ToList();
+        var allMethods = allTypes.SelectMany(type => type.Methods).Where(method => method.HasBody).ToList();
+
+        foreach (var type in allTypes)
+        {
+            var field = type.Fields.FirstOrDefault(field => field.MetadataToken.ToInt32() == tokenValue);
+            if (field != null)
+            {
+                return AnalyzeFieldMember(request, type, field, allTypes, allMethods, maxDepth);
+            }
+
+            var property = type.Properties.FirstOrDefault(property => property.MetadataToken.ToInt32() == tokenValue);
+            if (property != null)
+            {
+                return AnalyzeAccessorMember(
+                    request,
+                    type,
+                    property.Name,
+                    $"property {property.PropertyType.FullName} {property.Name}",
+                    AccessorTargets(property),
+                    allTypes,
+                    allMethods,
+                    maxDepth);
+            }
+
+            var eventDefinition = type.Events.FirstOrDefault(eventDefinition =>
+                eventDefinition.MetadataToken.ToInt32() == tokenValue);
+            if (eventDefinition != null)
+            {
+                return AnalyzeAccessorMember(
+                    request,
+                    type,
+                    eventDefinition.Name,
+                    $"event {eventDefinition.EventType.FullName} {eventDefinition.Name}",
+                    AccessorTargets(eventDefinition),
+                    allTypes,
+                    allMethods,
+                    maxDepth);
+            }
+        }
+
+        throw new ArgumentException($"metadata token not found: {request.MetadataToken}");
+    }
+
+    private static AnalyzeSymbolPayload AnalyzeFieldMember(
+        AnalyzeSymbolParams request,
+        TypeDefinition declaringType,
+        FieldDefinition field,
+        List<TypeDefinition> allTypes,
+        List<MethodDefinition> allMethods,
+        int maxDepth)
+    {
+        var callers = new List<SymbolReferenceEntry>();
+        var evidence = new List<SymbolEvidenceEntry>();
+
+        foreach (var method in allMethods)
+        {
+            foreach (var instruction in method.Body.Instructions)
+            {
+                if (instruction.Operand is not FieldReference fieldReference ||
+                    !FieldMatches(fieldReference, field))
+                {
+                    continue;
+                }
+
+                var usageType = method.DeclaringType;
+                callers.Add(BuildSymbolReference(usageType, method, instruction));
+                var category = instruction.OpCode.Code is Code.Stfld or Code.Stsfld
+                    ? "field-write"
+                    : instruction.OpCode.Code is Code.Ldfld or Code.Ldsfld or Code.Ldflda or Code.Ldsflda
+                        ? "field-read"
+                        : "field-reference";
+
+                evidence.Add(BuildEvidenceEntry(
+                    category,
+                    category switch
+                    {
+                        "field-write" => "Field write",
+                        "field-read" => "Field read",
+                        _ => "Field reference",
+                    },
+                    usageType,
+                    method,
+                    instruction,
+                    operand: field.FullName,
+                    value: FormatMetadataToken(field.MetadataToken)));
+            }
+        }
+
+        return new AnalyzeSymbolPayload
+        {
+            AssemblyPath = request.Assembly,
+            TypeName = declaringType.FullName,
+            MethodName = null,
+            TargetSignature = $"field {field.FieldType.FullName} {field.Name}",
+            MaxDepth = maxDepth,
+            Callers = DeduplicateSymbolReferences(callers),
+            Callees = new List<SymbolReferenceEntry>(),
+            Evidence = DeduplicateSymbolEvidence(evidence),
+        };
+    }
+
+    private static AnalyzeSymbolPayload AnalyzeAccessorMember(
+        AnalyzeSymbolParams request,
+        TypeDefinition declaringType,
+        string memberName,
+        string targetSignature,
+        List<MemberAccessorTarget> accessors,
+        List<TypeDefinition> allTypes,
+        List<MethodDefinition> allMethods,
+        int maxDepth)
+    {
+        var callers = new List<SymbolReferenceEntry>();
+        var evidence = new List<SymbolEvidenceEntry>();
+
+        foreach (var method in allMethods)
+        {
+            foreach (var instruction in method.Body.Instructions)
+            {
+                if (instruction.Operand is not MethodReference methodReference)
+                    continue;
+
+                var accessor = accessors.FirstOrDefault(accessor =>
+                    MethodMatches(methodReference, accessor.Method));
+                if (accessor == null)
+                    continue;
+
+                var usageType = method.DeclaringType;
+                callers.Add(BuildSymbolReference(usageType, method, instruction));
+                evidence.Add(BuildEvidenceEntry(
+                    accessor.Category,
+                    accessor.Label,
+                    usageType,
+                    method,
+                    instruction,
+                    operand: accessor.Method.FullName,
+                    value: FormatMetadataToken(accessor.Method.MetadataToken)));
+            }
+        }
+
+        return new AnalyzeSymbolPayload
+        {
+            AssemblyPath = request.Assembly,
+            TypeName = declaringType.FullName,
+            MethodName = null,
+            TargetSignature = targetSignature,
+            MaxDepth = maxDepth,
+            Callers = DeduplicateSymbolReferences(callers),
+            Callees = accessors.Select(accessor => new SymbolReferenceEntry
+            {
+                TypeName = declaringType.FullName,
+                MethodName = accessor.Method.Name,
+                Signature = FormatSignature(accessor.Method),
+                Depth = 1,
+                InstructionOffset = null,
+                Operation = accessor.Label,
+                Operand = memberName,
+            }).ToList(),
+            Evidence = DeduplicateSymbolEvidence(evidence),
+        };
+    }
+
+    private sealed record MemberAccessorTarget(
+        MethodDefinition Method,
+        string Category,
+        string Label);
+
+    private static List<MemberAccessorTarget> AccessorTargets(PropertyDefinition property)
+    {
+        var targets = new List<MemberAccessorTarget>();
+        if (property.GetMethod != null)
+        {
+            targets.Add(new MemberAccessorTarget(property.GetMethod, "property-get", "Property getter call"));
+        }
+        if (property.SetMethod != null)
+        {
+            targets.Add(new MemberAccessorTarget(property.SetMethod, "property-set", "Property setter call"));
+        }
+        return targets;
+    }
+
+    private static List<MemberAccessorTarget> AccessorTargets(EventDefinition eventDefinition)
+    {
+        var targets = new List<MemberAccessorTarget>();
+        if (eventDefinition.AddMethod != null)
+        {
+            targets.Add(new MemberAccessorTarget(eventDefinition.AddMethod, "event-add", "Event add call"));
+        }
+        if (eventDefinition.RemoveMethod != null)
+        {
+            targets.Add(new MemberAccessorTarget(eventDefinition.RemoveMethod, "event-remove", "Event remove call"));
+        }
+        return targets;
+    }
+
+    private static int? ParseMetadataToken(string? token)
+    {
+        if (string.IsNullOrWhiteSpace(token))
+            return null;
+
+        var normalized = token.Trim();
+        if (normalized.StartsWith("token:", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized["token:".Length..].Trim();
+        }
+        if (normalized.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[2..].Trim();
+        }
+
+        return int.TryParse(
+            normalized,
+            System.Globalization.NumberStyles.HexNumber,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out var value)
+            ? value
+            : null;
+    }
+
     /// <summary>
     /// Builds a <see cref="CSharpDecompiler"/> that uses a
     /// <see cref="UniversalAssemblyResolver"/> seeded with the assembly's own
@@ -399,13 +704,135 @@ internal sealed class Dispatcher
                 .Select(group => MapAssemblyReference(group.First()))
                 .ToList(),
             Resources = assembly.Modules
-                .SelectMany(module => module.Resources)
-                .GroupBy(BuildResourceIdentity, StringComparer.Ordinal)
-                .Select(group => MapResource(group.First()))
+                .SelectMany(module => module.Resources.Select(resource => new ResourceWithModule(module, resource)))
+                .GroupBy(item => BuildResourceIdentity(item.Resource), StringComparer.Ordinal)
+                .Select(group => MapResource(group.First().Module, group.First().Resource))
                 .ToList(),
             CustomAttributes = assembly.CustomAttributes.Select(MapAttribute).ToList(),
+            MetadataTables = BuildMetadataTables(assembly),
         };
     }
+
+    private sealed record ResourceWithModule(ModuleDefinition Module, Mono.Cecil.Resource Resource);
+
+    private static List<MetadataTableEntry> BuildMetadataTables(AssemblyDefinition assembly)
+    {
+        var types = assembly.Modules
+            .SelectMany(module => EnumerateTypes(module))
+            .Where(type => type.Name != "<Module>")
+            .ToList();
+        var methods = types.SelectMany(type => type.Methods).ToList();
+        var fields = types.SelectMany(type => type.Fields).ToList();
+        var properties = types.SelectMany(type => type.Properties).ToList();
+        var events = types.SelectMany(type => type.Events).ToList();
+
+        var rows = new List<MetadataTableEntry>
+        {
+            MetadataTable("Module", "0x00", assembly.Modules.Count, "Physical module records in the assembly."),
+            MetadataTable("TypeRef", "0x01", assembly.Modules.SelectMany(module => module.GetTypeReferences()).DistinctBy(reference => reference.FullName).Count(), "Referenced external or forwarded types."),
+            MetadataTable("TypeDef", "0x02", types.Count, "Defined types, including nested classes and compiler-created types."),
+            MetadataTable("Field", "0x04", fields.Count, "Defined fields."),
+            MetadataTable("MethodDef", "0x06", methods.Count, "Defined methods and constructors."),
+            MetadataTable("Param", "0x08", methods.Sum(method => method.Parameters.Count), "Method parameter rows."),
+            MetadataTable("MemberRef", "0x0A", assembly.Modules.SelectMany(module => module.GetMemberReferences()).DistinctBy(reference => reference.FullName).Count(), "Referenced methods and fields."),
+            MetadataTable("CustomAttribute", "0x0C", CountCustomAttributes(assembly), "Custom attributes across assembly, modules, types, and members."),
+            MetadataTable("Event", "0x14", events.Count, "Defined events."),
+            MetadataTable("Property", "0x17", properties.Count, "Defined properties."),
+            MetadataTable("ModuleRef", "0x1A", assembly.Modules.SelectMany(module => module.ModuleReferences).DistinctBy(reference => reference.Name).Count(), "Native module references used by P/Invoke."),
+            MetadataTable("TypeSpec", "0x1B", CountTypeSpecs(assembly), "Constructed generic type specifications referenced by signatures."),
+            MetadataTable("Assembly", "0x20", 1, "Assembly identity row."),
+            MetadataTable("AssemblyRef", "0x23", assembly.Modules.SelectMany(module => module.AssemblyReferences).DistinctBy(reference => reference.FullName).Count(), "Referenced assembly identities."),
+            MetadataTable("ManifestResource", "0x28", assembly.Modules.Sum(module => module.Resources.Count), "Manifest resource rows."),
+            MetadataTable("GenericParam", "0x2A", CountGenericParameters(types, methods), "Generic type and method parameter rows."),
+        };
+
+        return rows
+            .Where(row => row.RowCount > 0)
+            .OrderBy(row => row.Name, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static MetadataTableEntry MetadataTable(
+        string name,
+        string tokenPrefix,
+        int rowCount,
+        string description)
+        => new()
+        {
+            Name = name,
+            TokenPrefix = tokenPrefix,
+            RowCount = rowCount,
+            Description = description,
+        };
+
+    private static int CountCustomAttributes(AssemblyDefinition assembly)
+        => assembly.CustomAttributes.Count
+            + assembly.Modules.Sum(module =>
+                module.CustomAttributes.Count
+                + EnumerateTypes(module).Sum(type =>
+                    type.CustomAttributes.Count
+                    + type.Fields.Sum(field => field.CustomAttributes.Count)
+                    + type.Methods.Sum(method =>
+                        method.CustomAttributes.Count
+                        + method.Parameters.Sum(parameter => parameter.CustomAttributes.Count)
+                        + method.MethodReturnType.CustomAttributes.Count)
+                    + type.Properties.Sum(property => property.CustomAttributes.Count)
+                    + type.Events.Sum(eventDefinition => eventDefinition.CustomAttributes.Count)));
+
+    private static int CountTypeSpecs(AssemblyDefinition assembly)
+    {
+        var specs = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var module in assembly.Modules)
+        {
+            foreach (var type in EnumerateTypes(module))
+            {
+                AddTypeSpec(specs, type.BaseType);
+                foreach (var iface in type.Interfaces)
+                {
+                    AddTypeSpec(specs, iface.InterfaceType);
+                }
+                foreach (var field in type.Fields)
+                {
+                    AddTypeSpec(specs, field.FieldType);
+                }
+                foreach (var method in type.Methods)
+                {
+                    AddTypeSpec(specs, method.ReturnType);
+                    foreach (var parameter in method.Parameters)
+                    {
+                        AddTypeSpec(specs, parameter.ParameterType);
+                    }
+                }
+                foreach (var property in type.Properties)
+                {
+                    AddTypeSpec(specs, property.PropertyType);
+                }
+                foreach (var eventDefinition in type.Events)
+                {
+                    AddTypeSpec(specs, eventDefinition.EventType);
+                }
+            }
+        }
+
+        return specs.Count;
+    }
+
+    private static void AddTypeSpec(HashSet<string> specs, TypeReference? type)
+    {
+        if (type is GenericInstanceType
+            or Mono.Cecil.ArrayType
+            or Mono.Cecil.ByReferenceType
+            or Mono.Cecil.PointerType
+            or OptionalModifierType
+            or RequiredModifierType)
+        {
+            specs.Add(type.FullName);
+        }
+    }
+
+    private static int CountGenericParameters(List<TypeDefinition> types, List<MethodDefinition> methods)
+        => types.Sum(type => type.GenericParameters.Count)
+            + methods.Sum(method => method.GenericParameters.Count);
 
     private static ModuleMetadataEntry MapModule(ModuleDefinition module)
     {
@@ -432,10 +859,9 @@ internal sealed class Dispatcher
         };
     }
 
-    private static ResourceMetadataEntry MapResource(Mono.Cecil.Resource resource)
+    private static ResourceMetadataEntry MapResource(ModuleDefinition module, Mono.Cecil.Resource resource)
     {
-        // Avoid materializing embedded resource contents during Explore().
-        long? sizeBytes = null;
+        var inspection = InspectResource(resource);
 
         var implementation = resource switch
         {
@@ -449,9 +875,99 @@ internal sealed class Dispatcher
             Name = resource.Name,
             ResourceType = resource.ResourceType.ToString(),
             Attributes = resource.Attributes.ToString(),
-            SizeBytes = sizeBytes,
+            SizeBytes = inspection.SizeBytes,
             Implementation = NullIfEmpty(implementation),
+            MetadataToken = FormatManifestResourceToken(module, resource),
+            Sha256Hash = inspection.Sha256Hash,
+            PreviewKind = inspection.PreviewKind,
+            Preview = inspection.Preview,
+            PreviewTruncated = inspection.PreviewTruncated,
         };
+    }
+
+    private sealed record ResourceInspection(
+        long? SizeBytes,
+        string? Sha256Hash,
+        string? PreviewKind,
+        string? Preview,
+        bool PreviewTruncated);
+
+    private static ResourceInspection InspectResource(Mono.Cecil.Resource resource)
+    {
+        if (resource is not EmbeddedResource embedded)
+            return new ResourceInspection(null, null, null, null, false);
+
+        const int previewByteLimit = 4096;
+        const int previewCharLimit = 2000;
+
+        try
+        {
+            using var stream = embedded.GetResourceStream();
+            var size = stream.CanSeek ? (long?)stream.Length : null;
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            var hash = Convert.ToHexString(sha.ComputeHash(stream)).ToLowerInvariant();
+            stream.Position = 0;
+
+            var previewBytesLength = (int)Math.Min(previewByteLimit, size ?? previewByteLimit);
+            var buffer = new byte[previewBytesLength];
+            var read = stream.Read(buffer, 0, buffer.Length);
+            var bytes = buffer.AsSpan(0, read).ToArray();
+
+            if (!LooksTextual(bytes))
+            {
+                return new ResourceInspection(size, hash, "binary", null, size > previewByteLimit);
+            }
+
+            var preview = DecodeTextPreview(bytes);
+            var truncated = (size > previewByteLimit) || preview.Length > previewCharLimit;
+            if (preview.Length > previewCharLimit)
+                preview = preview[..previewCharLimit];
+
+            return new ResourceInspection(size, hash, "text", preview, truncated);
+        }
+        catch (Exception ex)
+        {
+            return new ResourceInspection(null, null, "error", ex.Message, false);
+        }
+    }
+
+    private static bool LooksTextual(byte[] bytes)
+    {
+        if (bytes.Length == 0)
+            return true;
+
+        var controlCount = 0;
+        foreach (var b in bytes)
+        {
+            if (b == 0)
+                return false;
+            if (b < 0x20 && b is not (9 or 10 or 13))
+                controlCount++;
+        }
+
+        return controlCount <= Math.Max(2, bytes.Length / 20);
+    }
+
+    private static string DecodeTextPreview(byte[] bytes)
+    {
+        var preview = Encoding.UTF8.GetString(bytes);
+        return preview.Replace("\0", string.Empty);
+    }
+
+    private static string? FormatManifestResourceToken(ModuleDefinition module, Mono.Cecil.Resource resource)
+    {
+        var index = module.Resources.IndexOf(resource);
+        if (index < 0)
+            return null;
+
+        var rid = index + 1;
+        return $"0x{0x28000000 | rid:X8}";
+    }
+
+    private static string? FormatMetadataToken(MetadataToken token)
+    {
+        var value = token.ToInt32();
+        return value == 0 ? null : $"0x{value:X8}";
     }
 
     private static AttributeMetadataEntry MapAttribute(CustomAttribute attribute)
@@ -461,6 +977,89 @@ internal sealed class Dispatcher
             AttributeType = attribute.AttributeType.FullName,
             Summary = BuildAttributeSummary(attribute),
         };
+    }
+
+    private static MemberMetadataEntry MapField(FieldDefinition field)
+    {
+        return new MemberMetadataEntry
+        {
+            Name = field.Name,
+            MetadataToken = FormatMetadataToken(field.MetadataToken),
+            Kind = "field",
+            Signature = $"{FormatVisibility(field)} {field.FieldType.Name} {field.Name}".Trim(),
+            Attributes = NullIfEmpty(field.Attributes.ToString()),
+        };
+    }
+
+    private static MemberMetadataEntry MapProperty(PropertyDefinition property)
+    {
+        var accessors = new List<string>();
+        if (property.GetMethod != null)
+        {
+            accessors.Add("get");
+        }
+        if (property.SetMethod != null)
+        {
+            accessors.Add("set");
+        }
+
+        return new MemberMetadataEntry
+        {
+            Name = property.Name,
+            MetadataToken = FormatMetadataToken(property.MetadataToken),
+            Kind = "property",
+            Signature = $"{property.PropertyType.Name} {property.Name} {{{string.Join("; ", accessors)}}}",
+            Attributes = NullIfEmpty(property.Attributes.ToString()),
+        };
+    }
+
+    private static MemberMetadataEntry MapEvent(EventDefinition eventDefinition)
+    {
+        return new MemberMetadataEntry
+        {
+            Name = eventDefinition.Name,
+            MetadataToken = FormatMetadataToken(eventDefinition.MetadataToken),
+            Kind = "event",
+            Signature = $"{eventDefinition.EventType.Name} {eventDefinition.Name}",
+            Attributes = NullIfEmpty(eventDefinition.Attributes.ToString()),
+        };
+    }
+
+    private static MemberMetadataEntry MapNestedType(TypeDefinition nestedType)
+    {
+        return new MemberMetadataEntry
+        {
+            Name = nestedType.FullName,
+            MetadataToken = FormatMetadataToken(nestedType.MetadataToken),
+            Kind = ClassifyTypeKind(nestedType),
+            Signature = nestedType.FullName,
+            Attributes = NullIfEmpty(nestedType.Attributes.ToString()),
+        };
+    }
+
+    private static string FormatVisibility(FieldDefinition field)
+    {
+        if (field.IsPublic)
+        {
+            return "public";
+        }
+        if (field.IsPrivate)
+        {
+            return "private";
+        }
+        if (field.IsFamily)
+        {
+            return "protected";
+        }
+        if (field.IsAssembly)
+        {
+            return "internal";
+        }
+        if (field.IsFamilyOrAssembly)
+        {
+            return "protected internal";
+        }
+        return string.Empty;
     }
 
     private static string? BuildAttributeSummary(CustomAttribute attribute)
@@ -1250,6 +1849,432 @@ internal sealed class Dispatcher
             method.Parameters.Select(p => $"{p.ParameterType.Name} {p.Name}")
         );
         return $"{visibility}{is_static}{return_type} {method.Name}({parameters})";
+    }
+
+    private static bool MethodMatches(MethodReference candidate, MethodReference target)
+    {
+        return string.Equals(candidate.Name, target.Name, StringComparison.Ordinal) &&
+            TypeMatches(candidate.DeclaringType, target.DeclaringType) &&
+            candidate.Parameters.Count == target.Parameters.Count;
+    }
+
+    private static bool TypeMatches(TypeReference candidate, TypeReference target)
+    {
+        var candidateName = candidate.FullName.Replace('/', '+');
+        var targetName = target.FullName.Replace('/', '+');
+        return string.Equals(candidateName, targetName, StringComparison.Ordinal);
+    }
+
+    private sealed record MethodCallEdge(
+        MethodDefinition Caller,
+        TypeDefinition CallerType,
+        MethodReference Callee,
+        Instruction Instruction);
+
+    private sealed record CallGraph(
+        Dictionary<string, List<MethodCallEdge>> Outgoing,
+        Dictionary<string, List<MethodCallEdge>> Incoming);
+
+    private static int ClampAnalyzeDepth(int? maxDepth)
+        => Math.Clamp(maxDepth.GetValueOrDefault(1), 1, 3);
+
+    private static CallGraph BuildCallGraph(AssemblyDefinition assembly)
+    {
+        var outgoing = new Dictionary<string, List<MethodCallEdge>>(StringComparer.Ordinal);
+        var incoming = new Dictionary<string, List<MethodCallEdge>>(StringComparer.Ordinal);
+
+        foreach (var module in assembly.Modules)
+        {
+            foreach (var type in EnumerateTypes(module))
+            {
+                foreach (var method in type.Methods)
+                {
+                    if (!method.HasBody)
+                        continue;
+
+                    var callerKey = MethodKey(method);
+                    foreach (var instruction in method.Body.Instructions)
+                    {
+                        if (instruction.Operand is not MethodReference methodRef)
+                            continue;
+
+                        var edge = new MethodCallEdge(method, type, methodRef, instruction);
+                        outgoing.GetValueOrDefault(callerKey)?.Add(edge);
+                        if (!outgoing.ContainsKey(callerKey))
+                            outgoing[callerKey] = new List<MethodCallEdge> { edge };
+
+                        var calleeKey = MethodKey(methodRef);
+                        incoming.GetValueOrDefault(calleeKey)?.Add(edge);
+                        if (!incoming.ContainsKey(calleeKey))
+                            incoming[calleeKey] = new List<MethodCallEdge> { edge };
+                    }
+                }
+            }
+        }
+
+        return new CallGraph(outgoing, incoming);
+    }
+
+    private static List<SymbolReferenceEntry> ExpandCallers(
+        CallGraph callGraph,
+        MethodDefinition targetMethod,
+        int maxDepth)
+    {
+        var results = new List<SymbolReferenceEntry>();
+        var visited = new HashSet<string>(StringComparer.Ordinal) { MethodKey(targetMethod) };
+        var queue = new Queue<(string MethodKey, int Depth)>();
+        queue.Enqueue((MethodKey(targetMethod), 0));
+
+        while (queue.Count > 0)
+        {
+            var (methodKey, depth) = queue.Dequeue();
+            if (depth >= maxDepth)
+                continue;
+
+            if (!callGraph.Incoming.TryGetValue(methodKey, out var edges))
+                continue;
+
+            foreach (var edge in edges)
+            {
+                var nextDepth = depth + 1;
+                results.Add(BuildSymbolReference(edge.CallerType, edge.Caller, edge.Instruction, nextDepth));
+
+                var callerKey = MethodKey(edge.Caller);
+                if (visited.Add(callerKey))
+                    queue.Enqueue((callerKey, nextDepth));
+            }
+        }
+
+        return results;
+    }
+
+    private static List<SymbolReferenceEntry> ExpandCallees(
+        CallGraph callGraph,
+        MethodDefinition targetMethod,
+        int maxDepth)
+    {
+        var results = new List<SymbolReferenceEntry>();
+        var visited = new HashSet<string>(StringComparer.Ordinal) { MethodKey(targetMethod) };
+        var queue = new Queue<(string MethodKey, int Depth)>();
+        queue.Enqueue((MethodKey(targetMethod), 0));
+
+        while (queue.Count > 0)
+        {
+            var (methodKey, depth) = queue.Dequeue();
+            if (depth >= maxDepth)
+                continue;
+
+            if (!callGraph.Outgoing.TryGetValue(methodKey, out var edges))
+                continue;
+
+            foreach (var edge in edges)
+            {
+                var nextDepth = depth + 1;
+                results.Add(BuildSymbolReference(edge.Callee, edge.Instruction, nextDepth));
+
+                var calleeKey = MethodKey(edge.Callee);
+                if (visited.Add(calleeKey))
+                    queue.Enqueue((calleeKey, nextDepth));
+            }
+        }
+
+        return results;
+    }
+
+    private static List<SymbolReferenceEntry> DirectTypeCallers(CallGraph callGraph, TypeDefinition targetType)
+    {
+        return callGraph
+            .Outgoing
+            .Values
+            .SelectMany(edges => edges)
+            .Where(edge =>
+                TypeMatches(edge.Callee.DeclaringType, targetType) ||
+                edge.Instruction.Operand is TypeReference typeRef && TypeMatches(typeRef, targetType))
+            .Select(edge => BuildSymbolReference(edge.CallerType, edge.Caller, edge.Instruction, 1))
+            .ToList();
+    }
+
+    private static string MethodKey(MethodReference method)
+        => $"{method.DeclaringType.FullName.Replace('/', '+')}::{method.Name}/{method.Parameters.Count}";
+
+    private static SymbolReferenceEntry BuildSymbolReference(
+        TypeDefinition declaringType,
+        MethodDefinition method,
+        Instruction instruction,
+        int depth = 1)
+    {
+        if (method.Name == "MoveNext" &&
+            IsCompilerGeneratedType(declaringType) &&
+            FindStateMachineOwner(declaringType) is { } owner)
+        {
+            declaringType = owner.DeclaringType;
+            method = owner;
+        }
+
+        return new SymbolReferenceEntry
+        {
+            TypeName = declaringType.FullName,
+            MethodName = method.Name,
+            Signature = FormatSignature(method),
+            Depth = depth,
+            InstructionOffset = instruction.Offset,
+            Operation = instruction.OpCode.ToString(),
+            Operand = FormatOperand(instruction.Operand),
+        };
+    }
+
+    private static SymbolReferenceEntry BuildSymbolReference(
+        MethodReference method,
+        Instruction instruction,
+        int depth = 1)
+    {
+        return new SymbolReferenceEntry
+        {
+            TypeName = method.DeclaringType.FullName,
+            MethodName = method.Name,
+            Signature = FormatMethodReferenceSignature(method),
+            Depth = depth,
+            InstructionOffset = instruction.Offset,
+            Operation = instruction.OpCode.ToString(),
+            Operand = FormatOperand(instruction.Operand),
+        };
+    }
+
+    private static void CollectSymbolEvidence(
+        List<SymbolEvidenceEntry> evidence,
+        TypeDefinition declaringType,
+        MethodDefinition method,
+        Instruction instruction)
+    {
+        if (instruction.OpCode == OpCodes.Ldstr && instruction.Operand is string literal)
+        {
+            evidence.Add(BuildEvidenceEntry(
+                "string",
+                "String literal",
+                declaringType,
+                method,
+                instruction,
+                value: literal));
+            return;
+        }
+
+        if (instruction.OpCode == OpCodes.Newobj && instruction.Operand is MethodReference constructor)
+        {
+            evidence.Add(BuildEvidenceEntry(
+                "allocation",
+                "Object allocation",
+                declaringType,
+                method,
+                instruction,
+                operand: constructor.DeclaringType.FullName));
+            return;
+        }
+
+        if (instruction.Operand is FieldReference fieldRef)
+        {
+            var category = instruction.OpCode.Code is Code.Stfld or Code.Stsfld
+                ? "field-write"
+                : instruction.OpCode.Code is Code.Ldfld or Code.Ldsfld or Code.Ldflda or Code.Ldsflda
+                    ? "field-read"
+                    : null;
+
+            if (category != null)
+            {
+                evidence.Add(BuildEvidenceEntry(
+                    category,
+                    category == "field-write" ? "Field write" : "Field read",
+                    declaringType,
+                    method,
+                    instruction,
+                    operand: $"{fieldRef.DeclaringType.FullName}.{fieldRef.Name}"));
+            }
+
+            return;
+        }
+
+        if (instruction.Operand is MethodReference methodRef)
+        {
+            var resolved = SafeResolve(methodRef);
+            if (resolved?.PInvokeInfo != null)
+            {
+                evidence.Add(BuildEvidenceEntry(
+                    "pinvoke",
+                    "P/Invoke call",
+                    declaringType,
+                    method,
+                    instruction,
+                    operand: $"{resolved.PInvokeInfo.Module.Name}!{resolved.PInvokeInfo.EntryPoint ?? resolved.Name}"));
+            }
+
+            var resourceReadLabel = ClassifyResourceReadCall(methodRef);
+            if (resourceReadLabel != null)
+            {
+                evidence.Add(BuildEvidenceEntry(
+                    "resource-read",
+                    resourceReadLabel,
+                    declaringType,
+                    method,
+                    instruction,
+                    operand: FormatMethodReferenceSignature(methodRef)));
+            }
+
+            var suspiciousLabel = ClassifySuspiciousCall(methodRef);
+            if (suspiciousLabel != null)
+            {
+                evidence.Add(BuildEvidenceEntry(
+                    "suspicious-call",
+                    suspiciousLabel,
+                    declaringType,
+                    method,
+                    instruction,
+                    operand: FormatMethodReferenceSignature(methodRef)));
+            }
+        }
+    }
+
+    private static SymbolEvidenceEntry BuildEvidenceEntry(
+        string category,
+        string label,
+        TypeDefinition declaringType,
+        MethodDefinition method,
+        Instruction instruction,
+        string? operand = null,
+        string? value = null)
+    {
+        return new SymbolEvidenceEntry
+        {
+            Category = category,
+            Label = label,
+            TypeName = declaringType.FullName,
+            MethodName = method.Name,
+            Signature = FormatSignature(method),
+            InstructionOffset = instruction.Offset,
+            Operation = instruction.OpCode.ToString(),
+            Operand = operand ?? FormatOperand(instruction.Operand),
+            Value = value,
+        };
+    }
+
+    private static MethodDefinition? SafeResolve(MethodReference method)
+    {
+        try
+        {
+            return method.Resolve();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool FieldMatches(FieldReference candidate, FieldDefinition target)
+    {
+        if (candidate.Name != target.Name || !TypeMatches(candidate.DeclaringType, target.DeclaringType))
+            return false;
+
+        try
+        {
+            return candidate.Resolve()?.MetadataToken.ToInt32() == target.MetadataToken.ToInt32();
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    private static string? ClassifyResourceReadCall(MethodReference method)
+    {
+        var declaringType = method.DeclaringType.FullName;
+        var name = method.Name;
+
+        if (declaringType == "System.Reflection.Assembly" &&
+            name is "GetManifestResourceStream" or "GetManifestResourceNames" or "GetManifestResourceInfo")
+            return "Manifest resource access";
+
+        if (declaringType == "System.Resources.ResourceManager" &&
+            name is "GetString" or "GetObject" or "GetStream" or "GetResourceSet")
+            return "ResourceManager access";
+
+        if (declaringType == "System.Resources.ResourceReader" &&
+            name is "GetEnumerator" or "ReadResources")
+            return "Resource reader access";
+
+        return null;
+    }
+
+    private static string? ClassifySuspiciousCall(MethodReference method)
+    {
+        var declaringType = method.DeclaringType.FullName;
+        var name = method.Name;
+
+        if (declaringType == "System.Diagnostics.Process" && name.StartsWith("Start", StringComparison.Ordinal))
+            return "Process launch";
+        if (declaringType.Contains("System.Net.Http.HttpClient", StringComparison.Ordinal) ||
+            declaringType.Contains("System.Net.WebClient", StringComparison.Ordinal) ||
+            declaringType.Contains("System.Net.Sockets", StringComparison.Ordinal))
+            return "Network API";
+        if (declaringType is "System.IO.File" or "System.IO.Directory" or "System.IO.FileInfo" or "System.IO.DirectoryInfo")
+            return "File-system API";
+        if (declaringType == "System.Reflection.Assembly" && name.StartsWith("Load", StringComparison.Ordinal))
+            return "Dynamic assembly load";
+        if (declaringType.Contains("Microsoft.Win32.Registry", StringComparison.Ordinal))
+            return "Registry API";
+        if (declaringType.Contains("System.Management.Automation", StringComparison.Ordinal))
+            return "PowerShell API";
+
+        return null;
+    }
+
+    private static string FormatMethodReferenceSignature(MethodReference method)
+    {
+        var returnType = method.ReturnType.Name;
+        var parameters = string.Join(
+            ", ",
+            method.Parameters.Select(p => p.ParameterType.Name));
+        return $"{returnType} {method.Name}({parameters})";
+    }
+
+    private static List<SymbolReferenceEntry> DeduplicateSymbolReferences(IEnumerable<SymbolReferenceEntry> entries)
+    {
+        return entries
+            .GroupBy(entry => new
+            {
+                entry.TypeName,
+                entry.MethodName,
+                entry.Signature,
+                entry.Depth,
+                entry.InstructionOffset,
+                entry.Operation,
+                entry.Operand,
+            })
+            .Select(group => group.First())
+            .OrderBy(entry => entry.Depth)
+            .ThenBy(entry => entry.TypeName, StringComparer.Ordinal)
+            .ThenBy(entry => entry.MethodName, StringComparer.Ordinal)
+            .ThenBy(entry => entry.InstructionOffset)
+            .ToList();
+    }
+
+    private static List<SymbolEvidenceEntry> DeduplicateSymbolEvidence(IEnumerable<SymbolEvidenceEntry> entries)
+    {
+        return entries
+            .GroupBy(entry => new
+            {
+                entry.Category,
+                entry.Label,
+                entry.TypeName,
+                entry.MethodName,
+                entry.InstructionOffset,
+                entry.Operation,
+                entry.Operand,
+                entry.Value,
+            })
+            .Select(group => group.First())
+            .OrderBy(entry => entry.Category, StringComparer.Ordinal)
+            .ThenBy(entry => entry.TypeName, StringComparer.Ordinal)
+            .ThenBy(entry => entry.MethodName, StringComparer.Ordinal)
+            .ThenBy(entry => entry.InstructionOffset)
+            .ToList();
     }
 
     private static string? FormatOperand(object? operand) => operand switch

@@ -2,15 +2,17 @@
 use dioxus::prelude::*;
 
 use crate::state::AppState;
+use crate::types::AnalysisStatus;
 
 use super::helpers::{
-    extract_findings, extract_methods, method_tab_id, resolve_finding_target, severity_color,
+    extract_findings, extract_methods, method_tab_id, resolve_finding_target,
+    resolve_method_reference, severity_color,
 };
 use super::theme::{
     C_ACCENT_AMBER, C_BG_ELEVATED, C_BG_SURFACE, C_BORDER, C_BORDER_ACCENT, C_TEXT_MUTED,
     C_TEXT_PRIMARY, C_TEXT_SECONDARY, FONT_MONO,
 };
-use super::view_models::{IlTab, IlTabKind};
+use super::view_models::{IlTab, IlTabKind, UiFinding, UiMethod};
 
 #[component]
 pub fn FindingsPanel(
@@ -40,6 +42,16 @@ pub fn FindingsPanel(
     };
 
     let findings_count = findings.len();
+    let (scan_status, scan_error) = selected_id
+        .as_ref()
+        .and_then(|id| {
+            state
+                .analysis_entries
+                .read()
+                .get(&format!("{id}::scan"))
+                .map(|entry| (Some(entry.status), entry.error.clone()))
+        })
+        .unwrap_or((None, None));
     let selected_finding_index = selected_finding.read().unwrap_or(0);
     let active_finding = findings.get(selected_finding_index).cloned();
 
@@ -83,7 +95,15 @@ pub fn FindingsPanel(
                             line { x1: "12", y1: "9", x2: "12", y2: "13" }
                             line { x1: "12", y1: "17", x2: "12.01", y2: "17" }
                         }
-                        p { "No findings — scan results will appear here" }
+                        p {
+                            match scan_status {
+                                Some(AnalysisStatus::Idle) => "Scan queued after metadata exploration",
+                                Some(AnalysisStatus::Running) => "MLVScan analysis is running",
+                                Some(AnalysisStatus::Error) => scan_error.as_deref().unwrap_or("MLVScan analysis failed"),
+                                Some(AnalysisStatus::Done) => "No findings from the current scan",
+                                None => "Open an assembly to run MLVScan analysis",
+                            }
+                        }
                     }
                 } else {
                     // Finding list
@@ -130,6 +150,7 @@ pub fn FindingsPanel(
                                                             kind: IlTabKind::Method,
                                                             type_name: type_name.clone(),
                                                             method_name: Some(method_name.clone()),
+                                                            metadata_token: None,
                                                             title: method_name.clone(),
                                                             subtitle: type_name.clone(),
                                                         });
@@ -188,27 +209,82 @@ pub fn FindingsPanel(
 
                     // Detail pane for selected finding
                     if let Some(detail) = active_finding {
-                        div {
-                            style: format!(
-                                "margin: 4px 8px 8px; padding: 12px; \
-                                 background: {C_BG_ELEVATED}; \
-                                 border: 1px solid {C_BORDER_ACCENT}; \
-                                 border-radius: 10px;"
-                            ),
-                            p {
-                                style: format!(
-                                    "font-size: 10px; font-weight: 700; letter-spacing: 0.8px; \
-                                     text-transform: uppercase; color: {C_TEXT_MUTED}; \
-                                     margin-bottom: 8px;"
-                                ),
-                                "Detail"
-                            }
-                            p {
+                        {
+                            let jump_targets = resolved_finding_navigation_targets(&methods, &detail);
+                            rsx! {
+                                div {
+                                    style: format!(
+                                        "margin: 4px 8px 8px; padding: 12px; \
+                                         background: {C_BG_ELEVATED}; \
+                                         border: 1px solid {C_BORDER_ACCENT}; \
+                                         border-radius: 10px;"
+                                    ),
+                                    p {
+                                        style: format!(
+                                            "font-size: 10px; font-weight: 700; letter-spacing: 0.8px; \
+                                             text-transform: uppercase; color: {C_TEXT_MUTED}; \
+                                             margin-bottom: 8px;"
+                                        ),
+                                        "Detail"
+                                    }
+                                    p {
                                 style: format!(
                                     "font-size: 12px; color: {C_TEXT_SECONDARY}; \
                                      line-height: 1.55; margin-bottom: 10px;"
                                 ),
                                 "{detail.description}"
+                            }
+                            if !jump_targets.is_empty() {
+                                div {
+                                    style: "display: grid; gap: 6px; margin-bottom: 10px;",
+                                    p {
+                                        style: format!(
+                                            "font-size: 10px; font-weight: 700; letter-spacing: 0.8px; \
+                                             text-transform: uppercase; color: {C_TEXT_MUTED};"
+                                        ),
+                                        "Jump Targets"
+                                    }
+                                    for (target_index, (target_type, target_method)) in jump_targets.iter().enumerate() {
+                                        {
+                                            let click_type = target_type.clone();
+                                            let click_method = target_method.clone();
+                                            rsx! {
+                                                button {
+                                                    key: "finding-target-{target_index}-{target_type}-{target_method}",
+                                                    style: format!(
+                                                        "width: 100%; min-width: 0; display: grid; gap: 2px; padding: 7px 8px; \
+                                                         border-radius: 7px; border: 1px solid {C_BORDER}; background: #101113; \
+                                                         color: {C_TEXT_SECONDARY}; text-align: left; cursor: pointer;"
+                                                    ),
+                                                    onclick: move |_| {
+                                                        open_method_tab(
+                                                            &click_type,
+                                                            &click_method,
+                                                            open_tabs,
+                                                            active_tab_id,
+                                                            selected_finding,
+                                                            Some(selected_finding_index),
+                                                        );
+                                                    },
+                                                    span {
+                                                        style: format!(
+                                                            "font-size: 10px; color: {C_TEXT_PRIMARY}; font-family: {FONT_MONO}; \
+                                                             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                                                        ),
+                                                        "{target_method}"
+                                                    }
+                                                    span {
+                                                        style: format!(
+                                                            "font-size: 9px; color: {C_TEXT_MUTED}; font-family: {FONT_MONO}; \
+                                                             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+                                                        ),
+                                                        "{target_type}"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             if !detail.code_snippet.is_empty() {
                                 pre {
@@ -225,9 +301,152 @@ pub fn FindingsPanel(
                                 }
                             }
                         }
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+fn open_method_tab(
+    type_name: &str,
+    method_name: &str,
+    mut open_tabs: Signal<Vec<IlTab>>,
+    mut active_tab_id: Signal<Option<String>>,
+    mut selected_finding: Signal<Option<usize>>,
+    finding_index: Option<usize>,
+) {
+    let tab_id = method_tab_id(type_name, method_name);
+    {
+        let mut tabs = open_tabs.write();
+        if !tabs.iter().any(|tab| tab.id == tab_id) {
+            tabs.push(IlTab {
+                id: tab_id.clone(),
+                kind: IlTabKind::Method,
+                type_name: type_name.to_string(),
+                method_name: Some(method_name.to_string()),
+                metadata_token: None,
+                title: method_name.to_string(),
+                subtitle: type_name.to_string(),
+            });
+        }
+    }
+
+    active_tab_id.set(Some(tab_id));
+    selected_finding.set(finding_index);
+}
+
+fn resolved_finding_navigation_targets(
+    methods: &[UiMethod],
+    finding: &UiFinding,
+) -> Vec<(String, String)> {
+    let mut targets = Vec::new();
+
+    if let Some(navigation) = finding.navigation.as_ref() {
+        for span in &navigation.method_spans {
+            if let Some(target) =
+                resolve_method_reference(methods, &span.type_name, &span.method_name)
+            {
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
+            }
+        }
+
+        if let Some(target) = resolve_method_reference(
+            methods,
+            &navigation.primary_type_name,
+            &navigation.primary_method_name,
+        ) {
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
+        }
+    }
+
+    if targets.is_empty() {
+        if let Some(target) = resolve_finding_target(methods, finding) {
+            targets.push(target);
+        }
+    }
+
+    targets
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolved_finding_navigation_targets;
+    use crate::components::view_models::{
+        UiFinding, UiFindingMethodSpan, UiFindingNavigation, UiMethod,
+    };
+
+    #[test]
+    fn finding_detail_targets_include_all_resolved_cross_method_spans() {
+        let methods = vec![
+            UiMethod {
+                type_name: "Unity.UnityCalifornia".to_string(),
+                method_name: ".cctor".to_string(),
+                metadata_token: None,
+                signature: String::new(),
+                instructions: Vec::new(),
+            },
+            UiMethod {
+                type_name: "Unity.UnityOhio".to_string(),
+                method_name: "Doral".to_string(),
+                metadata_token: None,
+                signature: String::new(),
+                instructions: Vec::new(),
+            },
+            UiMethod {
+                type_name: "Unity.UnityMichigan".to_string(),
+                method_name: "Kool".to_string(),
+                metadata_token: None,
+                signature: String::new(),
+                instructions: Vec::new(),
+            },
+        ];
+        let finding = UiFinding {
+            rule_id: "ObfuscatedReflectiveExecutionRule".to_string(),
+            severity: "Critical".to_string(),
+            location: "Unity".to_string(),
+            description: String::new(),
+            code_snippet: String::new(),
+            il_offset: None,
+            navigation: Some(UiFindingNavigation {
+                primary_type_name: "Unity.UnityCalifornia".to_string(),
+                primary_method_name: ".cctor".to_string(),
+                method_spans: vec![
+                    UiFindingMethodSpan {
+                        type_name: "Unity.UnityCalifornia".to_string(),
+                        method_name: ".cctor".to_string(),
+                        il_offsets: Vec::new(),
+                        csharp_snippets: Vec::new(),
+                    },
+                    UiFindingMethodSpan {
+                        type_name: "Unity.UnityOhio".to_string(),
+                        method_name: "Doral".to_string(),
+                        il_offsets: Vec::new(),
+                        csharp_snippets: Vec::new(),
+                    },
+                    UiFindingMethodSpan {
+                        type_name: "Unity.UnityMichigan".to_string(),
+                        method_name: "Kool".to_string(),
+                        il_offsets: Vec::new(),
+                        csharp_snippets: Vec::new(),
+                    },
+                ],
+            }),
+        };
+
+        assert_eq!(
+            resolved_finding_navigation_targets(&methods, &finding),
+            vec![
+                ("Unity.UnityCalifornia".to_string(), ".cctor".to_string()),
+                ("Unity.UnityOhio".to_string(), "Doral".to_string()),
+                ("Unity.UnityMichigan".to_string(), "Kool".to_string()),
+            ]
+        );
     }
 }

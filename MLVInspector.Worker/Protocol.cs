@@ -133,6 +133,105 @@ public sealed class CompareParams
     public string? ExpectedRule { get; set; }
 }
 
+public sealed class AnalyzeSymbolParams
+{
+    [JsonPropertyName("assembly")]
+    public string Assembly { get; set; } = "";
+
+    [JsonPropertyName("typeName")]
+    public string TypeName { get; set; } = "";
+
+    [JsonPropertyName("methodName")]
+    public string? MethodName { get; set; }
+
+    [JsonPropertyName("metadataToken")]
+    public string? MetadataToken { get; set; }
+
+    [JsonPropertyName("maxDepth")]
+    public int? MaxDepth { get; set; }
+}
+
+public sealed class AnalyzeSymbolPayload
+{
+    [JsonPropertyName("assemblyPath")]
+    public string AssemblyPath { get; set; } = "";
+
+    [JsonPropertyName("typeName")]
+    public string TypeName { get; set; } = "";
+
+    [JsonPropertyName("methodName")]
+    public string? MethodName { get; set; }
+
+    [JsonPropertyName("targetSignature")]
+    public string? TargetSignature { get; set; }
+
+    [JsonPropertyName("maxDepth")]
+    public int MaxDepth { get; set; } = 1;
+
+    [JsonPropertyName("callers")]
+    public List<SymbolReferenceEntry> Callers { get; set; } = new();
+
+    [JsonPropertyName("callees")]
+    public List<SymbolReferenceEntry> Callees { get; set; } = new();
+
+    [JsonPropertyName("evidence")]
+    public List<SymbolEvidenceEntry> Evidence { get; set; } = new();
+}
+
+public sealed class SymbolReferenceEntry
+{
+    [JsonPropertyName("typeName")]
+    public string TypeName { get; set; } = "";
+
+    [JsonPropertyName("methodName")]
+    public string MethodName { get; set; } = "";
+
+    [JsonPropertyName("signature")]
+    public string Signature { get; set; } = "";
+
+    [JsonPropertyName("depth")]
+    public int Depth { get; set; } = 1;
+
+    [JsonPropertyName("instructionOffset")]
+    public int? InstructionOffset { get; set; }
+
+    [JsonPropertyName("operation")]
+    public string Operation { get; set; } = "";
+
+    [JsonPropertyName("operand")]
+    public string? Operand { get; set; }
+}
+
+public sealed class SymbolEvidenceEntry
+{
+    [JsonPropertyName("category")]
+    public string Category { get; set; } = "";
+
+    [JsonPropertyName("label")]
+    public string Label { get; set; } = "";
+
+    [JsonPropertyName("typeName")]
+    public string TypeName { get; set; } = "";
+
+    [JsonPropertyName("methodName")]
+    public string MethodName { get; set; } = "";
+
+    [JsonPropertyName("signature")]
+    public string Signature { get; set; } = "";
+
+    [JsonPropertyName("instructionOffset")]
+    public int? InstructionOffset { get; set; }
+
+    [JsonPropertyName("operation")]
+    public string Operation { get; set; } = "";
+
+    [JsonPropertyName("operand")]
+    public string? Operand { get; set; }
+
+    [JsonPropertyName("value")]
+    public string? Value { get; set; }
+}
+
 public sealed class WorkerResponse<T>
 {
     [JsonPropertyName("id")]
@@ -212,6 +311,24 @@ public sealed class AssemblyMetadataEntry
 
     [JsonPropertyName("customAttributes")]
     public List<AttributeMetadataEntry> CustomAttributes { get; set; } = new();
+
+    [JsonPropertyName("metadataTables")]
+    public List<MetadataTableEntry> MetadataTables { get; set; } = new();
+}
+
+public sealed class MetadataTableEntry
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("tokenPrefix")]
+    public string TokenPrefix { get; set; } = "";
+
+    [JsonPropertyName("rowCount")]
+    public int RowCount { get; set; }
+
+    [JsonPropertyName("description")]
+    public string Description { get; set; } = "";
 }
 
 public sealed class ModuleMetadataEntry
@@ -269,6 +386,21 @@ public sealed class ResourceMetadataEntry
 
     [JsonPropertyName("implementation")]
     public string? Implementation { get; set; }
+
+    [JsonPropertyName("metadataToken")]
+    public string? MetadataToken { get; set; }
+
+    [JsonPropertyName("sha256Hash")]
+    public string? Sha256Hash { get; set; }
+
+    [JsonPropertyName("previewKind")]
+    public string? PreviewKind { get; set; }
+
+    [JsonPropertyName("preview")]
+    public string? Preview { get; set; }
+
+    [JsonPropertyName("previewTruncated")]
+    public bool PreviewTruncated { get; set; }
 }
 
 public sealed class AttributeMetadataEntry
@@ -285,11 +417,47 @@ public sealed class TypeEntry
     [JsonPropertyName("typeName")]
     public string TypeName { get; set; } = "";
 
+    [JsonPropertyName("metadataToken")]
+    public string? MetadataToken { get; set; }
+
     [JsonPropertyName("kind")]
     public string Kind { get; set; } = "";
 
+    [JsonPropertyName("fields")]
+    public List<MemberMetadataEntry> Fields { get; set; } = new();
+
+    [JsonPropertyName("properties")]
+    public List<MemberMetadataEntry> Properties { get; set; } = new();
+
+    [JsonPropertyName("events")]
+    public List<MemberMetadataEntry> Events { get; set; } = new();
+
+    [JsonPropertyName("nestedTypes")]
+    public List<MemberMetadataEntry> NestedTypes { get; set; } = new();
+
+    [JsonPropertyName("customAttributes")]
+    public List<AttributeMetadataEntry> CustomAttributes { get; set; } = new();
+
     [JsonPropertyName("methods")]
     public List<MethodEntry> Methods { get; set; } = new();
+}
+
+public sealed class MemberMetadataEntry
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("metadataToken")]
+    public string? MetadataToken { get; set; }
+
+    [JsonPropertyName("kind")]
+    public string Kind { get; set; } = "";
+
+    [JsonPropertyName("signature")]
+    public string Signature { get; set; } = "";
+
+    [JsonPropertyName("attributes")]
+    public string? Attributes { get; set; }
 }
 
 public sealed class MethodEntry
@@ -299,6 +467,9 @@ public sealed class MethodEntry
 
     [JsonPropertyName("methodName")]
     public string MethodName { get; set; } = "";
+
+    [JsonPropertyName("metadataToken")]
+    public string? MetadataToken { get; set; }
 
     [JsonPropertyName("signature")]
     public string Signature { get; set; } = "";
@@ -540,15 +711,20 @@ public sealed class RuleEntry
 [JsonSerializable(typeof(WorkerResponse<ExplorePayload>))]
 [JsonSerializable(typeof(WorkerResponse<ScanPayload>))]
 [JsonSerializable(typeof(WorkerResponse<DecompilePayload>))]
+[JsonSerializable(typeof(WorkerResponse<AnalyzeSymbolPayload>))]
 [JsonSerializable(typeof(WorkerResponse<List<RuleEntry>>))]
 [JsonSerializable(typeof(WorkerResponse<object>))]
 [JsonSerializable(typeof(ExploreParams))]
 [JsonSerializable(typeof(ScanParams))]
 [JsonSerializable(typeof(DecompileParams))]
 [JsonSerializable(typeof(CompareParams))]
+[JsonSerializable(typeof(AnalyzeSymbolParams))]
 [JsonSerializable(typeof(ExplorePayload))]
 [JsonSerializable(typeof(ScanPayload))]
 [JsonSerializable(typeof(DecompilePayload))]
+[JsonSerializable(typeof(AnalyzeSymbolPayload))]
+[JsonSerializable(typeof(SymbolEvidenceEntry))]
+[JsonSerializable(typeof(MetadataTableEntry))]
 [JsonSerializable(typeof(List<RuleEntry>))]
 [JsonSerializable(typeof(string))]
 internal partial class WorkerJsonContext : JsonSerializerContext

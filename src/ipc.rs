@@ -53,6 +53,16 @@ pub struct DecompileParams {
     pub profile: Option<String>,
 }
 
+#[derive(Debug, Serialize, Default, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeSymbolParams {
+    pub assembly: String,
+    pub type_name: String,
+    pub method_name: Option<String>,
+    pub metadata_token: Option<String>,
+    pub max_depth: Option<i32>,
+}
+
 /// Empty params for methods that don't need any.
 #[derive(Debug, Serialize)]
 pub struct NoParams {}
@@ -104,6 +114,8 @@ pub struct AssemblyMetadataEntry {
     pub resources: Vec<ResourceMetadataEntry>,
     #[serde(default)]
     pub custom_attributes: Vec<AttributeMetadataEntry>,
+    #[serde(default)]
+    pub metadata_tables: Vec<MetadataTableEntry>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,6 +147,12 @@ pub struct ResourceMetadataEntry {
     pub attributes: Option<String>,
     pub size_bytes: Option<i64>,
     pub implementation: Option<String>,
+    pub metadata_token: Option<String>,
+    pub sha256_hash: Option<String>,
+    pub preview_kind: Option<String>,
+    pub preview: Option<String>,
+    #[serde(default)]
+    pub preview_truncated: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,13 +162,45 @@ pub struct AttributeMetadataEntry {
     pub summary: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MetadataTableEntry {
+    pub name: String,
+    pub token_prefix: String,
+    pub row_count: i32,
+    pub description: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TypeEntry {
     pub type_name: String,
     #[serde(default)]
+    pub metadata_token: Option<String>,
+    #[serde(default)]
     pub kind: String,
+    #[serde(default)]
+    pub fields: Vec<MemberMetadataEntry>,
+    #[serde(default)]
+    pub properties: Vec<MemberMetadataEntry>,
+    #[serde(default)]
+    pub events: Vec<MemberMetadataEntry>,
+    #[serde(default)]
+    pub nested_types: Vec<MemberMetadataEntry>,
+    #[serde(default)]
+    pub custom_attributes: Vec<AttributeMetadataEntry>,
     pub methods: Vec<MethodEntry>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MemberMetadataEntry {
+    pub name: String,
+    pub metadata_token: Option<String>,
+    #[serde(default)]
+    pub kind: String,
+    pub signature: String,
+    pub attributes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +208,8 @@ pub struct TypeEntry {
 pub struct MethodEntry {
     pub type_name: String,
     pub method_name: String,
+    #[serde(default)]
+    pub metadata_token: Option<String>,
     pub signature: String,
     pub has_body: Option<bool>,
     pub instructions: Vec<ILInstructionEntry>,
@@ -311,10 +363,61 @@ pub struct DecompileSourceSpan {
     pub end_line: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeSymbolPayload {
+    pub assembly_path: String,
+    pub type_name: String,
+    pub method_name: Option<String>,
+    pub target_signature: Option<String>,
+    #[serde(default = "default_analyze_depth")]
+    pub max_depth: i32,
+    pub callers: Vec<SymbolReferenceEntry>,
+    pub callees: Vec<SymbolReferenceEntry>,
+    #[serde(default)]
+    pub evidence: Vec<SymbolEvidenceEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SymbolReferenceEntry {
+    pub type_name: String,
+    pub method_name: String,
+    pub signature: String,
+    #[serde(default = "default_symbol_reference_depth")]
+    pub depth: i32,
+    pub instruction_offset: Option<i32>,
+    pub operation: String,
+    pub operand: Option<String>,
+}
+
+fn default_analyze_depth() -> i32 {
+    1
+}
+
+fn default_symbol_reference_depth() -> i32 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SymbolEvidenceEntry {
+    pub category: String,
+    pub label: String,
+    pub type_name: String,
+    pub method_name: String,
+    pub signature: String,
+    pub instruction_offset: Option<i32>,
+    pub operation: String,
+    pub operand: Option<String>,
+    pub value: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        DecompilePayload, ExplorePayload, NoParams, ScanParams, WorkerRequest, WorkerResponse,
+        AnalyzeSymbolParams, AnalyzeSymbolPayload, DecompilePayload, ExplorePayload, NoParams,
+        ScanParams, WorkerRequest, WorkerResponse,
     };
 
     #[test]
@@ -338,6 +441,22 @@ mod tests {
     }
 
     #[test]
+    fn analyze_symbol_params_serializes_metadata_token() {
+        let json = serde_json::to_value(AnalyzeSymbolParams {
+            assembly: "sample.dll".to_string(),
+            type_name: "Demo.Widget".to_string(),
+            method_name: None,
+            metadata_token: Some("0x04000001".to_string()),
+            max_depth: Some(1),
+        })
+        .expect("params should serialize");
+
+        assert_eq!(json["typeName"], "Demo.Widget");
+        assert_eq!(json["metadataToken"], "0x04000001");
+        assert_eq!(json["maxDepth"], 1);
+    }
+
+    #[test]
     fn explore_payload_deserializes_missing_types_as_empty() {
         let payload: ExplorePayload =
             serde_json::from_str(r#"{"assemblyPath":"sample.dll","methods":[]}"#)
@@ -347,6 +466,39 @@ mod tests {
         assert!(payload.assembly_metadata.assembly_name.is_empty());
         assert!(payload.methods.is_empty());
         assert!(payload.types.is_empty());
+    }
+
+    #[test]
+    fn explore_payload_deserializes_type_and_method_metadata_tokens() {
+        let payload: ExplorePayload = serde_json::from_str(
+            r#"{"assemblyPath":"sample.dll","methods":[{"typeName":"Demo.Runner","methodName":"Run","metadataToken":"0x06000002","signature":"void Run()","hasBody":true,"instructions":[],"pInvoke":null}],"types":[{"typeName":"Demo.Runner","metadataToken":"0x02000002","kind":"class","methods":[]}]}"#,
+        )
+        .expect("payload should deserialize");
+
+        assert_eq!(
+            payload.types[0].metadata_token.as_deref(),
+            Some("0x02000002")
+        );
+        assert_eq!(
+            payload.methods[0].metadata_token.as_deref(),
+            Some("0x06000002")
+        );
+    }
+
+    #[test]
+    fn explore_payload_deserializes_metadata_table_summary() {
+        let payload: ExplorePayload = serde_json::from_str(
+            r#"{"assemblyPath":"sample.dll","assemblyMetadata":{"assemblyName":"sample","fullName":"sample, Version=1.0.0.0","metadataTables":[{"name":"TypeDef","tokenPrefix":"0x02","rowCount":4,"description":"Defined types"}]},"methods":[],"types":[]}"#,
+        )
+        .expect("payload should deserialize");
+
+        assert_eq!(payload.assembly_metadata.metadata_tables.len(), 1);
+        assert_eq!(payload.assembly_metadata.metadata_tables[0].name, "TypeDef");
+        assert_eq!(
+            payload.assembly_metadata.metadata_tables[0].token_prefix,
+            "0x02"
+        );
+        assert_eq!(payload.assembly_metadata.metadata_tables[0].row_count, 4);
     }
 
     #[test]
@@ -377,5 +529,33 @@ mod tests {
     fn empty_params_serializes_as_empty_object() {
         let json = serde_json::to_string(&NoParams {}).expect("empty params should serialize");
         assert_eq!(json, "{}");
+    }
+
+    #[test]
+    fn analyze_symbol_payload_deserializes_callers_and_callees() {
+        let payload: AnalyzeSymbolPayload = serde_json::from_str(
+            r#"{"assemblyPath":"sample.dll","typeName":"Ns.A","methodName":"Run","targetSignature":"void Run()","maxDepth":2,"callers":[{"typeName":"Ns.B","methodName":"Call","signature":"void Call()","depth":2,"instructionOffset":4,"operation":"call","operand":"A.Run"}],"callees":[],"evidence":[{"category":"string","label":"String literal","typeName":"Ns.A","methodName":"Run","signature":"void Run()","instructionOffset":8,"operation":"ldstr","operand":"\"powershell\"","value":"powershell"}]}"#,
+        )
+        .expect("payload should deserialize");
+
+        assert_eq!(payload.type_name, "Ns.A");
+        assert_eq!(payload.method_name.as_deref(), Some("Run"));
+        assert_eq!(payload.max_depth, 2);
+        assert_eq!(payload.callers.len(), 1);
+        assert_eq!(payload.callers[0].depth, 2);
+        assert!(payload.callees.is_empty());
+        assert_eq!(payload.evidence.len(), 1);
+        assert_eq!(payload.evidence[0].category, "string");
+    }
+
+    #[test]
+    fn analyze_symbol_payload_defaults_missing_evidence_to_empty() {
+        let payload: AnalyzeSymbolPayload = serde_json::from_str(
+            r#"{"assemblyPath":"sample.dll","typeName":"Ns.A","methodName":null,"targetSignature":"Ns.A","callers":[],"callees":[]}"#,
+        )
+        .expect("payload should deserialize");
+
+        assert_eq!(payload.max_depth, 1);
+        assert!(payload.evidence.is_empty());
     }
 }

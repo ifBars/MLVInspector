@@ -19,6 +19,7 @@ Thumbs.db
 .agent
 .agents
 .claude
+docs
 AGENTS.md
 skills-lock.json
 coverage/

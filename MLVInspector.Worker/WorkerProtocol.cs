@@ -38,6 +38,15 @@ internal static class WorkerProtocol
                     break;
                 }
 
+                case "analyze-symbol":
+                {
+                    var p = req.Params.Deserialize(WorkerJsonContext.Default.AnalyzeSymbolParams)
+                        ?? throw new ArgumentException("missing analyze-symbol params");
+                    var payload = dispatcher.AnalyzeSymbol(p);
+                    await WriteOkAsync(stdout, req.Id, payload, WorkerJsonContext.Default.AnalyzeSymbolPayload);
+                    break;
+                }
+
                 case "list-rules":
                 {
                     var payload = dispatcher.ListRules();

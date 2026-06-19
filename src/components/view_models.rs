@@ -7,6 +7,7 @@
 pub struct UiMethod {
     pub type_name: String,
     pub method_name: String,
+    pub metadata_token: Option<String>,
     pub signature: String,
     pub instructions: Vec<UiInstruction>,
 }
@@ -44,12 +45,63 @@ pub struct UiFindingMethodSpan {
     pub csharp_snippets: Vec<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UiScanNeighborhood {
+    pub finding_index: usize,
+    pub rule_id: String,
+    pub severity: String,
+    pub chain_kind: String,
+    pub title: String,
+    pub description: String,
+    pub location: String,
+    pub primary_type_name: Option<String>,
+    pub primary_method_name: Option<String>,
+    pub nodes: Vec<UiScanNeighborhoodNode>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UiScanNeighborhoodNode {
+    pub node_type: String,
+    pub location: String,
+    pub operation: String,
+    pub description: String,
+    pub instruction_offset: Option<i32>,
+}
+
 #[derive(Clone, PartialEq)]
 pub struct UiTypeGroup {
     pub full_type_name: String,
     pub display_name: String,
+    pub metadata_token: Option<String>,
     pub kind: String,
     pub methods: Vec<UiMethod>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct UiTypeDetails {
+    pub full_type_name: String,
+    pub metadata_token: Option<String>,
+    pub kind: String,
+    pub fields: Vec<UiMemberMetadata>,
+    pub properties: Vec<UiMemberMetadata>,
+    pub events: Vec<UiMemberMetadata>,
+    pub nested_types: Vec<UiMemberMetadata>,
+    pub custom_attributes: Vec<UiAttributeMetadata>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct UiMemberMetadata {
+    pub name: String,
+    pub metadata_token: Option<String>,
+    pub kind: String,
+    pub signature: String,
+    pub attributes: Option<String>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct UiAttributeMetadata {
+    pub attribute_type: String,
+    pub summary: Option<String>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -71,6 +123,7 @@ pub struct IlTab {
     pub kind: IlTabKind,
     pub type_name: String,
     pub method_name: Option<String>,
+    pub metadata_token: Option<String>,
     pub title: String,
     pub subtitle: String,
 }
@@ -80,4 +133,85 @@ pub struct IlTab {
 pub enum ViewMode {
     Il,
     CSharp,
+    Analyze,
+}
+
+pub fn format_symbol_reference_location(reference: &crate::ipc::SymbolReferenceEntry) -> String {
+    match reference.instruction_offset {
+        Some(offset) => format!("IL_{offset:04X} {}", reference.operation),
+        None => reference.operation.clone(),
+    }
+}
+
+pub fn symbol_reference_display_name(reference: &crate::ipc::SymbolReferenceEntry) -> String {
+    format!("{}.{}", reference.type_name, reference.method_name)
+}
+
+pub fn format_symbol_evidence_location(evidence: &crate::ipc::SymbolEvidenceEntry) -> String {
+    match evidence.instruction_offset {
+        Some(offset) => format!("IL_{offset:04X} {}", evidence.operation),
+        None => evidence.operation.clone(),
+    }
+}
+
+pub fn symbol_evidence_display_value(evidence: &crate::ipc::SymbolEvidenceEntry) -> String {
+    evidence
+        .value
+        .as_ref()
+        .or(evidence.operand.as_ref())
+        .cloned()
+        .unwrap_or_else(|| evidence.label.clone())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_symbol_reference_location_includes_hex_offset() {
+        let reference = crate::ipc::SymbolReferenceEntry {
+            type_name: "Ns.Loader".to_string(),
+            method_name: "Run".to_string(),
+            signature: "void Run()".to_string(),
+            depth: 1,
+            instruction_offset: Some(31),
+            operation: "call".to_string(),
+            operand: Some("Process.Start".to_string()),
+        };
+
+        assert_eq!(format_symbol_reference_location(&reference), "IL_001F call");
+    }
+
+    #[test]
+    fn symbol_reference_display_name_joins_type_and_method() {
+        let reference = crate::ipc::SymbolReferenceEntry {
+            type_name: "Ns.Loader".to_string(),
+            method_name: "Run".to_string(),
+            signature: "void Run()".to_string(),
+            depth: 1,
+            instruction_offset: None,
+            operation: "call".to_string(),
+            operand: None,
+        };
+
+        assert_eq!(symbol_reference_display_name(&reference), "Ns.Loader.Run");
+    }
+
+    #[test]
+    fn symbol_evidence_display_value_prefers_literal_value() {
+        let evidence = crate::ipc::SymbolEvidenceEntry {
+            category: "string".to_string(),
+            label: "String literal".to_string(),
+            type_name: "Ns.Loader".to_string(),
+            method_name: "Run".to_string(),
+            signature: "void Run()".to_string(),
+            instruction_offset: Some(10),
+            operation: "ldstr".to_string(),
+            operand: Some("\"fallback\"".to_string()),
+            value: Some("powershell".to_string()),
+        };
+
+        assert_eq!(symbol_evidence_display_value(&evidence), "powershell");
+        assert_eq!(format_symbol_evidence_location(&evidence), "IL_000A ldstr");
+    }
 }

@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use dioxus::prelude::*;
 
-use crate::types::OpenAssembly;
+use crate::types::{AnalysisStatus, OpenAssembly};
 
 use super::helpers::{assembly_metadata_tab_id, method_tab_id, type_tab_id};
 use super::theme::{
@@ -19,6 +19,8 @@ pub(crate) fn ExplorerTree(
     namespace_count: usize,
     type_count: usize,
     methods_count: usize,
+    explore_status: Option<AnalysisStatus>,
+    explore_error: Option<String>,
     selected_type_name: Option<String>,
     selected_method_name: Option<String>,
     expanded_assemblies: Signal<BTreeSet<String>>,
@@ -122,6 +124,7 @@ pub(crate) fn ExplorerTree(
                                             kind: IlTabKind::AssemblyMetadata,
                                             type_name: String::new(),
                                             method_name: None,
+                                            metadata_token: None,
                                             title: "Metadata".to_string(),
                                             subtitle: selected_assembly_path.clone(),
                                         });
@@ -154,7 +157,12 @@ pub(crate) fn ExplorerTree(
                             style: format!(
                                 "margin: 6px 0 0 12px; padding: 8px 10px; color: {C_TEXT_MUTED}; font-size: 10px; line-height: 1.45;"
                             ),
-                            "Explore results will appear here after loading an assembly."
+                            match explore_status {
+                                Some(AnalysisStatus::Running) => "Reading assembly metadata and IL...",
+                                Some(AnalysisStatus::Error) => explore_error.as_deref().unwrap_or("Explore failed."),
+                                Some(AnalysisStatus::Idle) => "Assembly is queued for metadata and IL exploration.",
+                                _ => "No types or methods were found in this assembly.",
+                            }
                         }
                     } else {
                         for namespace in grouped_types.iter() {
@@ -211,6 +219,10 @@ pub(crate) fn ExplorerTree(
                                                     let type_name = group.full_type_name.clone();
                                                     let type_name_toggle = type_name.clone();
                                                     let type_name_select = type_name.clone();
+                                                    let type_metadata_token = group.metadata_token.clone();
+                                                    let type_badge_label = type_metadata_token
+                                                        .clone()
+                                                        .unwrap_or_else(|| type_method_count_label(group.methods.len()));
                                                     let type_expanded =
                                                         expanded_types.read().contains(&type_name);
                                                     let is_type_selected =
@@ -264,6 +276,7 @@ pub(crate) fn ExplorerTree(
                                                                                 kind: IlTabKind::Type,
                                                                                 type_name: type_name_select.clone(),
                                                                                 method_name: None,
+                                                                                metadata_token: type_metadata_token.clone(),
                                                                                 title: display_name,
                                                                                 subtitle: type_name_select.clone(),
                                                                             });
@@ -290,7 +303,7 @@ pub(crate) fn ExplorerTree(
                                                                     style: format!(
                                                                         "flex-shrink: 0; font-size: 9px; color: {C_TEXT_MUTED}; font-family: {FONT_MONO};"
                                                                     ),
-                                                                    "{type_method_count_label(group.methods.len())}"
+                                                                    "{type_badge_label}"
                                                                 }
                                                             }
                                                         }
@@ -314,6 +327,7 @@ pub(crate) fn ExplorerTree(
                                                                             );
                                                                             let method_type = method.type_name.clone();
                                                                             let method_name = method.method_name.clone();
+                                                                            let method_metadata_token = method.metadata_token.clone();
                                                                             let is_selected =
                                                                                 selected_method_name.as_ref()
                                                                                     == Some(&method_key);
@@ -341,6 +355,7 @@ pub(crate) fn ExplorerTree(
                                                                                                     kind: IlTabKind::Method,
                                                                                                     type_name: method_type.clone(),
                                                                                                     method_name: Some(method_name.clone()),
+                                                                                                    metadata_token: method_metadata_token.clone(),
                                                                                                     title: method_name.clone(),
                                                                                                     subtitle: method_type.clone(),
                                                                                                 });
@@ -361,6 +376,14 @@ pub(crate) fn ExplorerTree(
                                                                                             }
                                                                                         ),
                                                                                         "{method.method_name}"
+                                                                                    }
+                                                                                    if let Some(token) = method_metadata_token.as_ref() {
+                                                                                        span {
+                                                                                            style: format!(
+                                                                                                "font-size: 9px; color: {C_TEXT_MUTED}; font-family: {FONT_MONO};"
+                                                                                            ),
+                                                                                            "{token}"
+                                                                                        }
                                                                                     }
                                                                                     span {
                                                                                         style: format!(

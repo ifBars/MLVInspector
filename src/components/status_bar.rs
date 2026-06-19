@@ -2,6 +2,7 @@
 use dioxus::prelude::*;
 
 use crate::state::AppState;
+use crate::types::AnalysisStatus;
 
 use super::theme::{C_ACCENT_AMBER, C_ACCENT_BLUE, C_TEXT_MUTED, C_TEXT_SECONDARY, FONT_MONO};
 
@@ -14,6 +15,21 @@ pub fn StatusBar(
     let state = use_context::<AppState>();
     let assemblies_count = state.assemblies.read().len();
     let rules_count = state.rules.read().len();
+    let selected_id = state.selected_id.read().clone();
+    let (explore_status, scan_status) = selected_id
+        .as_ref()
+        .map(|id| {
+            let entries = state.analysis_entries.read();
+            (
+                entries
+                    .get(&format!("{id}::explore"))
+                    .map(|entry| entry.status),
+                entries
+                    .get(&format!("{id}::scan"))
+                    .map(|entry| entry.status),
+            )
+        })
+        .unwrap_or((None, None));
 
     rsx! {
         div {
@@ -64,6 +80,16 @@ pub fn StatusBar(
                         "{findings_count}"
                     }
                 }
+                if let Some(label) = operation_status_label(explore_status, scan_status) {
+                    span {
+                        style: format!("color: {C_TEXT_MUTED};"),
+                        "activity: "
+                        span {
+                            style: format!("color: {C_ACCENT_BLUE}; font-weight: 600;"),
+                            "{label}"
+                        }
+                    }
+                }
             }
 
             // Right: error display or version
@@ -89,5 +115,19 @@ pub fn StatusBar(
                 }
             }
         }
+    }
+}
+
+fn operation_status_label(
+    explore_status: Option<AnalysisStatus>,
+    scan_status: Option<AnalysisStatus>,
+) -> Option<&'static str> {
+    match (explore_status, scan_status) {
+        (Some(AnalysisStatus::Running), _) => Some("reading metadata/IL"),
+        (_, Some(AnalysisStatus::Idle)) => Some("scan queued"),
+        (_, Some(AnalysisStatus::Running)) => Some("MLVScan running"),
+        (Some(AnalysisStatus::Error), _) => Some("explore failed"),
+        (_, Some(AnalysisStatus::Error)) => Some("scan failed"),
+        _ => None,
     }
 }

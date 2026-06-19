@@ -48,6 +48,16 @@ pub fn ExplorerPanel(
             })
         })
         .unwrap_or_default();
+    let (explore_status, explore_error) = selected_id
+        .as_ref()
+        .and_then(|id| {
+            state
+                .analysis_entries
+                .read()
+                .get(&format!("{id}::explore"))
+                .map(|entry| (Some(entry.status), entry.error.clone()))
+        })
+        .unwrap_or((None, None));
 
     let type_count = grouped_types.iter().map(|ns| ns.types.len()).sum::<usize>();
     let namespace_count = grouped_types.len();
@@ -112,6 +122,8 @@ pub fn ExplorerPanel(
                         namespace_count,
                         type_count,
                         methods_count,
+                        explore_status,
+                        explore_error,
                         selected_type_name,
                         selected_method_name,
                         expanded_assemblies,

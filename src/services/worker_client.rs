@@ -22,8 +22,9 @@ use tracing::{debug, error, warn};
 use crate::{
     error::AppError,
     ipc::{
-        DecompileParams, DecompilePayload, ExploreParams, ExplorePayload, NoParams, RuleEntry,
-        ScanParams, ScanPayload, WorkerRequest, WorkerResponse,
+        AnalyzeSymbolParams, AnalyzeSymbolPayload, DecompileParams, DecompilePayload,
+        ExploreParams, ExplorePayload, NoParams, RuleEntry, ScanParams, ScanPayload, WorkerRequest,
+        WorkerResponse,
     },
     services::tool_paths::resolve_worker_path,
 };
@@ -217,6 +218,15 @@ impl WorkerClient {
         }
     }
 
+    pub async fn shutdown(&self) {
+        let mut guard = self.inner.lock().await;
+        if let Some(mut state) = guard.state.take() {
+            if let Err(err) = state._child.start_kill() {
+                warn!(error = %err, "failed to stop worker process");
+            }
+        }
+    }
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     pub async fn explore(&self, params: ExploreParams) -> Result<ExplorePayload, AppError> {
@@ -240,6 +250,13 @@ impl WorkerClient {
         }
 
         Ok(payload)
+    }
+
+    pub async fn analyze_symbol(
+        &self,
+        params: AnalyzeSymbolParams,
+    ) -> Result<AnalyzeSymbolPayload, AppError> {
+        self.call("analyze-symbol", params).await
     }
 }
 

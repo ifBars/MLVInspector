@@ -5,7 +5,7 @@ use crate::state::AppState;
 
 use super::commands::{execute_command, palette_command_items, CommandContext};
 use super::explorer_tools::{build_palette_entries, PaletteEntry, PaletteEntryKind};
-use super::helpers::{method_tab_id, type_tab_id};
+use super::helpers::{assembly_metadata_tab_id, method_tab_id, type_tab_id};
 use super::overlay::OverlayKind;
 use super::theme::{C_TEXT_MUTED, C_TEXT_PRIMARY, FONT_MONO};
 use super::view_models::{IlTab, IlTabKind};
@@ -76,7 +76,7 @@ pub fn CommandPalette(
                     input {
                         id: "command-palette-input",
                         value: "{query()}",
-                        placeholder: "Search assemblies, types, methods, and actions",
+                        placeholder: "Search assemblies, types, members, methods, and actions",
                         style: format!(
                             "flex: 1; min-width: 0; border: none; outline: none; background: transparent; color: {C_TEXT_PRIMARY}; font-size: 13px;"
                         ),
@@ -101,7 +101,7 @@ pub fn CommandPalette(
                             p { "No results match the current search" }
                         }
                     } else {
-                        for group_label in ["Actions", "Assemblies", "Types", "Methods"] {
+                        for group_label in ["Actions", "Assemblies", "Types", "Members", "Methods", "Metadata"] {
                             {
                                 let group_entries = entries
                                     .iter()
@@ -230,31 +230,35 @@ fn handle_palette_entry(
                     active_tab_id.set(None);
                     selected_finding.set(None);
                 }
-                PaletteEntryKind::Type => {
-                    let Some(type_name) = entry.type_name.clone() else {
+                PaletteEntryKind::Resource => {
+                    let (Some(assembly_id), Some(assembly_path)) =
+                        (entry.assembly_id.clone(), entry.assembly_path.clone())
+                    else {
                         return;
                     };
-                    let tab_id = type_tab_id(&type_name);
-                    let display_name = type_name
-                        .rsplit('.')
-                        .next()
-                        .unwrap_or(&type_name)
-                        .to_string();
+                    let tab_id = assembly_metadata_tab_id(&assembly_id);
                     {
                         let mut tabs = open_tabs.write();
                         if !tabs.iter().any(|tab| tab.id == tab_id) {
                             tabs.push(IlTab {
                                 id: tab_id.clone(),
-                                kind: IlTabKind::Type,
-                                type_name: type_name.clone(),
+                                kind: IlTabKind::AssemblyMetadata,
+                                type_name: String::new(),
                                 method_name: None,
-                                title: display_name,
-                                subtitle: type_name.clone(),
+                                metadata_token: entry.metadata_token.clone(),
+                                title: "Metadata".to_string(),
+                                subtitle: assembly_path,
                             });
                         }
                     }
                     active_tab_id.set(Some(tab_id));
                     selected_finding.set(None);
+                }
+                PaletteEntryKind::Type => {
+                    open_type_palette_entry(entry, open_tabs, active_tab_id, selected_finding);
+                }
+                PaletteEntryKind::Member => {
+                    open_type_palette_entry(entry, open_tabs, active_tab_id, selected_finding);
                 }
                 PaletteEntryKind::Method => {
                     let (Some(type_name), Some(method_name)) =
@@ -271,6 +275,7 @@ fn handle_palette_entry(
                                 kind: IlTabKind::Method,
                                 type_name: type_name.clone(),
                                 method_name: Some(method_name.clone()),
+                                metadata_token: entry.metadata_token.clone(),
                                 title: method_name,
                                 subtitle: type_name,
                             });
@@ -286,4 +291,41 @@ fn handle_palette_entry(
 
     active_overlay.set(None);
     query.set(String::new());
+}
+
+fn open_type_palette_entry(
+    entry: PaletteEntry,
+    mut open_tabs: Signal<Vec<IlTab>>,
+    mut active_tab_id: Signal<Option<String>>,
+    mut selected_finding: Signal<Option<usize>>,
+) {
+    let Some(type_name) = entry.type_name.clone() else {
+        return;
+    };
+    let tab_id = type_tab_id(&type_name);
+    let display_name = type_name
+        .rsplit('.')
+        .next()
+        .unwrap_or(&type_name)
+        .to_string();
+    {
+        let mut tabs = open_tabs.write();
+        if let Some(tab) = tabs.iter_mut().find(|tab| tab.id == tab_id) {
+            if entry.metadata_token.is_some() {
+                tab.metadata_token = entry.metadata_token.clone();
+            }
+        } else {
+            tabs.push(IlTab {
+                id: tab_id.clone(),
+                kind: IlTabKind::Type,
+                type_name: type_name.clone(),
+                method_name: None,
+                metadata_token: entry.metadata_token.clone(),
+                title: display_name,
+                subtitle: type_name.clone(),
+            });
+        }
+    }
+    active_tab_id.set(Some(tab_id));
+    selected_finding.set(None);
 }

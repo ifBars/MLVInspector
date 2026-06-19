@@ -560,12 +560,24 @@ mod tests {
                 types: vec![
                     crate::ipc::TypeEntry {
                         type_name: "Example.Core.Entry".to_string(),
+                        metadata_token: Some("0x02000002".to_string()),
                         kind: "class".to_string(),
+                        fields: Vec::new(),
+                        properties: Vec::new(),
+                        events: Vec::new(),
+                        nested_types: Vec::new(),
+                        custom_attributes: Vec::new(),
                         methods: Vec::new(),
                     },
                     crate::ipc::TypeEntry {
                         type_name: "Example.Core.Entry`1".to_string(),
+                        metadata_token: Some("0x02000003".to_string()),
                         kind: "class".to_string(),
+                        fields: Vec::new(),
+                        properties: Vec::new(),
+                        events: Vec::new(),
+                        nested_types: Vec::new(),
+                        custom_attributes: Vec::new(),
                         methods: Vec::new(),
                     },
                 ],
@@ -601,6 +613,7 @@ mod tests {
         MethodEntry {
             type_name: type_name.to_string(),
             method_name: method_name.to_string(),
+            metadata_token: Some("0x06000001".to_string()),
             signature: format!("void {method_name}()"),
             has_body: Some(true),
             instructions: Vec::new(),
