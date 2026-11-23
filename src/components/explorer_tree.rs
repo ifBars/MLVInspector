@@ -417,9 +417,7 @@ pub(crate) fn ExplorerTree(
 fn BranchContainer(children: Element) -> Element {
     rsx! {
         div {
-            style: format!(
-                "display: flex; flex-direction: column; margin-left: 18px; padding-left: 6px; border-left: 1px solid rgba(255,255,255,0.06);"
-            ),
+            style: "display: flex; flex-direction: column; margin-left: 18px; padding-left: 6px; border-left: 1px solid rgba(255,255,255,0.06);",
             {children}
         }
     }

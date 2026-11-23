@@ -92,9 +92,14 @@ jobs:
 
       - name: Prepare release package
         run: |
+          app=target/dx/mlvinspector/release/windows/app
+          test -s "$app/mlvinspector.exe"
+          test -d "$app/assets"
+          test -s worker-publish/ILInspector.Worker.exe
           mkdir -p release-package
-          cp -r dist/MLVInspector/* release-package/ 2>/dev/null || cp target/release/mlvinspector.exe release-package/ 2>/dev/null || true
-          cp -r worker-publish/* release-package/ 2>/dev/null || true
+          cp "$app/mlvinspector.exe" release-package/
+          cp -R "$app/assets" release-package/
+          cp -R worker-publish/. release-package/
         shell: bash
 
       - name: Create ZIP archive
